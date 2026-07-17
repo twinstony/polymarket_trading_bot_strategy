@@ -1,0 +1,57 @@
+# =============================================================================
+# Polymarket Trading Bot — .gitignore
+# =============================================================================
+
+# ---- Secrets / credentials -------------------------------------------------
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets.json
+
+# ---- Mutable trading config (created at runtime by Telegram commands) -------
+config.json
+*.tmp
+
+# ---- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ---- Virtual environments --------------------------------------------------
+.venv/
+venv/
+env/
+
+# ---- Local dev / IDE -------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ---- Logs ------------------------------------------------------------------
+*.log
+logs/
+
+# ---- Database / local state ------------------------------------------------
+*.db
+*.sqlite
+*.sqlite3
+trades/
+data/
+
+# ---- CLOB / trading cache --------------------------------------------------
+order_cache/
+market_cache/
+*.csv
+
+# ---- WorkBuddy workspace memory (project-specific) -------------------------
+.workbuddy/

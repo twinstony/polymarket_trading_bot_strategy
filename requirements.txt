@@ -1,0 +1,9 @@
+# Polymarket CLOB trading bot (Python rewrite)
+# Core trading: official Polymarket CLOB V2 client
+py-clob-client-v2>=1.0.0
+
+# HTTP for Telegram Bot API + webhook delivery + Polymarket gamma API
+requests>=2.31.0
+
+# .env loading (mirrors the original dotenv usage)
+python-dotenv>=1.0.0
