@@ -41,6 +41,10 @@ Thumbs.db
 *.log
 logs/
 
+# ---- Local backups ---------------------------------------------------------
+# These can contain .env snapshots and must never be published.
+backups/
+
 # ---- Database / local state ------------------------------------------------
 *.db
 *.sqlite

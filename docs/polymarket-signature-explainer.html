@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Polymarket 挂单与钱包签名字段说明</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172033;
+      --muted: #667085;
+      --line: #d9dee8;
+      --panel: #f7f9fc;
+      --ok: #087443;
+      --warn: #9a4b00;
+      --blue: #2357d8;
+    }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: #fff;
+      line-height: 1.55;
+    }
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 40px 22px 64px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 32px;
+      line-height: 1.2;
+    }
+    h2 {
+      margin: 32px 0 12px;
+      font-size: 22px;
+    }
+    p {
+      margin: 8px 0;
+    }
+    code {
+      background: #eef2f8;
+      border-radius: 5px;
+      padding: 1px 5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.95em;
+    }
+    .status {
+      border: 1px solid #badbcc;
+      background: #f0fbf5;
+      border-radius: 8px;
+      padding: 16px;
+      margin: 22px 0;
+    }
+    .status strong {
+      color: var(--ok);
+    }
+    .note {
+      border: 1px solid #ffd79a;
+      background: #fff8eb;
+      border-radius: 8px;
+      padding: 14px 16px;
+      color: var(--warn);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      display: table;
+    }
+    th,
+    td {
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+      padding: 11px 12px;
+    }
+    th {
+      background: var(--panel);
+      font-weight: 700;
+    }
+    tr:last-child td {
+      border-bottom: 0;
+    }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      word-break: break-all;
+    }
+    .small {
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 14px;
+      margin-top: 12px;
+    }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #fff;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Polymarket 挂单与钱包签名字段说明</h1>
+    <p class="small">本页记录这次脚本挂单、Rabby 钱包签名字段，以及以后排查时最容易混淆的几个地址。</p>
+
+    <section class="status">
+      <strong>这次挂单是成功的。</strong>
+      <p>Portfolio 的 Open 列表里显示：<code>Buy Gen.G 25¢</code>，数量 <code>0 / 160</code>，总额 <code>$40.00</code>，过期时间 <code>Until cancelled</code>。</p>
+      <p><code>0 / 160</code> 表示当前还没有成交，订单总量是 160 shares。只要它在 Open 列表里，就是一个正在等待成交的挂单。</p>
+    </section>
+
+    <h2>三个地址不要混</h2>
+    <div class="grid">
+      <div class="card">
+        <strong>Rabby 外部钱包地址</strong>
+        <p class="mono">0xYourRabbySignerAddress</p>
+        <p class="small">由当前 <code>PRIVATE_KEY</code> 推导出来，负责签名。</p>
+      </div>
+      <div class="card">
+        <strong>Polymarket API / Funder 地址</strong>
+        <p class="mono">0xYourPolymarketFunderAddress</p>
+        <p class="small">脚本里的 <code>FUNDER</code>。Rabby 签名弹窗里的 <code>maker</code>、<code>signer</code>、<code>verifyingContract</code> 都指向它。</p>
+      </div>
+      <div class="card">
+        <strong>充值地址</strong>
+        <p class="small">只用于向 Polymarket 充值，不填到脚本的 <code>FUNDER</code>。</p>
+      </div>
+    </div>
+
+    <h2>Rabby 签名字段说明</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>字段</th>
+          <th>意思</th>
+          <th>这次截图里的含义</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>Operation</code></td>
+          <td>钱包要执行的签名类型。</td>
+          <td><code>TypedDataSign</code>，表示签的是 EIP-712 typed data，不是直接转账。</td>
+        </tr>
+        <tr>
+          <td><code>contents.salt</code></td>
+          <td>订单随机数/唯一编号，用来防止同一订单签名被重复使用。</td>
+          <td>每次新订单通常都会不同。</td>
+        </tr>
+        <tr>
+          <td><code>maker</code></td>
+          <td>订单资金/仓位归属地址。</td>
+          <td>应等于 Polymarket API / Funder 地址。</td>
+        </tr>
+        <tr>
+          <td><code>signer</code></td>
+          <td>订单声明的签名主体。</td>
+          <td><code>SIGNATURE_TYPE=3</code> 时应等于 Polymarket API / Funder 地址。</td>
+        </tr>
+        <tr>
+          <td><code>tokenId</code></td>
+          <td>具体 outcome token 的 ID。一个市场通常有多个 outcome token。</td>
+          <td>决定买的是哪一边，例如 Gen.G、KC、YES 或 NO。</td>
+        </tr>
+        <tr>
+          <td><code>makerAmount</code></td>
+          <td>买单时通常是愿意支付的 USDC 金额，按 6 位小数放大。</td>
+          <td><code>76000000</code> 约等于 <code>76 USDC</code>。具体数值取决于网页那次订单的价格和数量。</td>
+        </tr>
+        <tr>
+          <td><code>takerAmount</code></td>
+          <td>买单时通常是想买到的 shares 数量，按 6 位小数放大。</td>
+          <td><code>100000000</code> 约等于 <code>100 shares</code>。</td>
+        </tr>
+        <tr>
+          <td><code>side</code></td>
+          <td>买卖方向。</td>
+          <td><code>0</code> 表示 BUY，<code>1</code> 表示 SELL。</td>
+        </tr>
+        <tr>
+          <td><code>signatureType</code></td>
+          <td>Polymarket 钱包签名模式。</td>
+          <td><code>3</code> 表示 POLY_1271 / deposit wallet。</td>
+        </tr>
+        <tr>
+          <td><code>timestamp</code></td>
+          <td>订单签名时间戳，通常是毫秒。</td>
+          <td>用于校验订单签名生成时间。</td>
+        </tr>
+        <tr>
+          <td><code>metadata</code></td>
+          <td>订单附加元数据。</td>
+          <td>全 0 表示没有额外元数据。</td>
+        </tr>
+        <tr>
+          <td><code>builder</code></td>
+          <td>构建者/推荐方字段。</td>
+          <td>全 0 表示没有 builder 标识。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Domain 字段说明</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>字段</th>
+          <th>意思</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>name: DepositWallet</code></td>
+          <td>说明这次签名是 deposit wallet 体系下的签名。</td>
+        </tr>
+        <tr>
+          <td><code>version: 1</code></td>
+          <td>签名域版本。</td>
+        </tr>
+        <tr>
+          <td><code>chainId: 137</code></td>
+          <td>Polygon 主网。</td>
+        </tr>
+        <tr>
+          <td><code>verifyingContract</code></td>
+          <td>负责验证签名的合约地址。对于 deposit wallet，通常应等于 Polymarket API / Funder 地址。</td>
+        </tr>
+        <tr>
+          <td><code>salt</code></td>
+          <td>签名域的 salt。截图里是全 0，属于正常情况。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>以后怎么看是否成功</h2>
+    <ul>
+      <li>终端里看到 <code>Order placed</code>、<code>success: True</code>、<code>status: live</code>，说明脚本提交订单成功。</li>
+      <li>网页 Portfolio 的 <code>Open</code> 里出现订单，说明订单正在挂着等待成交。</li>
+      <li><code>Filled 0 / 160</code> 表示还没有成交；如果变成 <code>160 / 160</code>，表示全部成交。</li>
+      <li>要停止脚本，在终端按 <code>Ctrl + C</code>。</li>
+    </ul>
+
+    <div class="note">
+      <strong>安全提醒：</strong>钱包弹窗里如果 <code>maker</code>、<code>signer</code>、<code>verifyingContract</code> 不是你当前 Polymarket API / Funder 地址，先不要签。私钥不要保存进截图、文档或聊天记录。
+    </div>
+  </main>
+</body>
+</html>
