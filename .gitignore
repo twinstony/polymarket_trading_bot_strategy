@@ -55,6 +55,7 @@ data/
 # ---- CLOB / trading cache --------------------------------------------------
 order_cache/
 market_cache/
+.runtime/
 *.csv
 
 # ---- WorkBuddy workspace memory (project-specific) -------------------------

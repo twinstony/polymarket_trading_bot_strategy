@@ -21,6 +21,7 @@ V1→V2 migration (Apr 2026):
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import httpx
@@ -36,7 +37,7 @@ from py_clob_client_v2.http_helpers import helpers as clob_http_helpers
 
 from strategy import MarketData
 
-clob_http_helpers._http_client = httpx.Client(http2=False)
+clob_http_helpers._http_client = httpx.Client(http2=False, timeout=30)
 
 
 # --------------------------------------------------------------------------- #
@@ -73,7 +74,18 @@ def init_client(config) -> ClobClient:
         )
     else:
         unauth = ClobClient(**kwargs)
-        creds = unauth.create_or_derive_api_key()
+        last_error: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                creds = unauth.create_or_derive_api_key()
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                print(f"[trading] API key derive failed ({attempt}/3): {exc}")
+                if attempt < 3:
+                    time.sleep(attempt * 3)
+        else:
+            raise last_error or RuntimeError("could not derive CLOB API credentials")
 
     client = ClobClient(**kwargs, creds=creds)
     try:

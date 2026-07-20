@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Polymarket 脚本自主管理说明</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172033;
+      --muted: #667085;
+      --line: #d9dee8;
+      --panel: #f7f9fc;
+      --blue: #2457d6;
+      --green: #087443;
+      --red: #b42318;
+      --amber: #9a4b00;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: #ffffff;
+      line-height: 1.58;
+    }
+    main {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 36px 22px 72px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 34px;
+      line-height: 1.18;
+      letter-spacing: 0;
+    }
+    h2 {
+      margin: 34px 0 12px;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+    h3 {
+      margin: 20px 0 8px;
+      font-size: 17px;
+      letter-spacing: 0;
+    }
+    p { margin: 8px 0; }
+    code {
+      background: #eef2f8;
+      border-radius: 5px;
+      padding: 1px 5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: .94em;
+      word-break: break-word;
+    }
+    pre {
+      margin: 12px 0;
+      padding: 14px;
+      background: #101828;
+      color: #f9fafb;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      border-radius: 0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      display: table;
+      margin: 12px 0;
+    }
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    th {
+      background: var(--panel);
+      font-weight: 700;
+    }
+    tr:last-child td { border-bottom: 0; }
+    ul { padding-left: 22px; }
+    li { margin: 5px 0; }
+    .sub {
+      color: var(--muted);
+      font-size: 15px;
+      max-width: 840px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 14px;
+      margin-top: 12px;
+    }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #fff;
+    }
+    .card strong { display: block; margin-bottom: 6px; }
+    .good {
+      border: 1px solid #badbcc;
+      background: #f0fbf5;
+      color: var(--green);
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-top: 18px;
+    }
+    .warn {
+      border: 1px solid #ffd79a;
+      background: #fff8eb;
+      color: var(--amber);
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin: 14px 0;
+    }
+    .danger {
+      border: 1px solid #f3b8b2;
+      background: #fff3f2;
+      color: var(--red);
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin: 14px 0;
+    }
+    .pill {
+      display: inline-block;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 9px;
+      color: var(--muted);
+      font-size: 13px;
+      margin-right: 6px;
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Polymarket 脚本自主管理说明</h1>
+    <p class="sub">以后你自己管理脚本时，主要只需要改市场、方向、买入价、投入金额、卖出价和交易开关。钱包配置通常不要动。</p>
+
+    <div class="good">
+      <strong>最核心的一句话：</strong>
+      每次交易前确认市场没结束，算好份数，填好卖出价，把 <code>TRADING_ENABLED=true</code> 打开；比赛结束或暂停排查时改回 <code>false</code>。
+    </div>
+
+    <h2>1. 文件在哪里</h2>
+    <div class="grid">
+      <div class="card">
+        <strong>项目路径</strong>
+        <code>/Users/ad/Documents/polydata/polymarket_trading_bot_strategy</code>
+      </div>
+      <div class="card">
+        <strong>主要配置</strong>
+        <code>.env</code>
+      </div>
+      <div class="card">
+        <strong>知识库</strong>
+        <code>docs/polymarket-knowledge.md</code>
+      </div>
+    </div>
+
+    <h2>2. 不要随便改的钱包配置</h2>
+    <div class="danger">
+      <strong>这些字段通常不要动，也不要发给别人。</strong>
+      <p><code>.env</code> 里有私钥，不要上传到 GitHub，不要截图给别人。</p>
+    </div>
+    <pre><code>PRIVATE_KEY=
+SIGNATURE_TYPE=
+FUNDER=
+CLOB_API_KEY=
+CLOB_SECRET=
+CLOB_PASSPHRASE=</code></pre>
+
+    <h2>3. 每次交易主要改这些</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>字段</th>
+          <th>作用</th>
+          <th>填写方式</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td><code>TRADING_ENABLED</code></td><td>交易总开关</td><td><code>true</code> 允许交易；<code>false</code> 禁止自动买卖</td></tr>
+        <tr><td><code>TOKEN_ID</code></td><td>具体方向的 outcome token</td><td>必须是你要买的那一边</td></tr>
+        <tr><td><code>MARKET_LABEL</code></td><td>日志显示名</td><td>写清楚比赛、市场、方向</td></tr>
+        <tr><td><code>SHARE_AMOUNT</code></td><td>买入份数</td><td><code>投入金额 / 买入价</code></td></tr>
+        <tr><td><code>ENTRY_PRICE</code></td><td>买入限价</td><td>例如 <code>0.35</code></td></tr>
+        <tr><td><code>EXIT_PRICE</code></td><td>卖出目标价</td><td>例如 <code>0.65</code></td></tr>
+        <tr><td><code>CONDITIONAL_ENTRY</code></td><td>是否等待更好价格</td><td><code>false</code> 启动就挂；<code>true</code> 等盘口达到条件</td></tr>
+      </tbody>
+    </table>
+
+    <h2>4. 份数计算</h2>
+    <p>公式：</p>
+    <pre><code>SHARE_AMOUNT = 投入 USDC / 买入价格</code></pre>
+    <table>
+      <thead>
+        <tr><th>投入</th><th>买入价</th><th>份数</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>50 USDC</td><td>0.25</td><td>200</td></tr>
+        <tr><td>50 USDC</td><td>0.35</td><td>142.86</td></tr>
+        <tr><td>30 USDC</td><td>0.15</td><td>200</td></tr>
+        <tr><td>40 USDC</td><td>0.20</td><td>200</td></tr>
+      </tbody>
+    </table>
+
+    <h2>5. 单层交易</h2>
+    <p>适合一笔买入、一笔卖出目标。</p>
+    <pre><code>TRADING_ENABLED=true
+TOKEN_ID=目标方向token
+MARKET_LABEL=比赛 - 市场 - 方向
+SHARE_AMOUNT=份数
+ENTRY_PRICE=买入价
+EXIT_PRICE=卖出价
+CONDITIONAL_ENTRY=false</code></pre>
+    <p>运行：</p>
+    <pre><code>cd /Users/ad/Documents/polydata/polymarket_trading_bot_strategy
+source .venv/bin/activate
+python main.py</code></pre>
+    <p>停止：在终端按 <code>Ctrl + C</code>。</p>
+
+    <h2>6. 分层交易</h2>
+    <p>适合同一个方向多档买入，例如 <code>0.35 买 50</code> 和 <code>0.25 买 50</code>，同一个 <code>0.65</code> 卖出目标。</p>
+    <pre><code>cd /Users/ad/Documents/polydata/polymarket_trading_bot_strategy
+source .venv/bin/activate
+python tools/layered_order_runner.py \
+  --market-slug 市场slug \
+  --token-id 目标方向token \
+  --label "日志名称" \
+  --exit-price 0.65 \
+  --layer 0.35:50 \
+  --layer 0.25:50 \
+  --state-file .runtime/本次交易.json \
+  --poll-interval 20</code></pre>
+    <p><span class="pill">--layer 0.35:50</span> 表示 0.35 买入 50 USDC。</p>
+    <p>分层监控器会记录旧仓位基线，只给本次新增成交份数补卖单。</p>
+
+    <h2>7. 比赛结束后</h2>
+    <div class="warn">
+      <strong>比赛结束或不再适合入场时，先关交易总开关。</strong>
+    </div>
+    <pre><code>TRADING_ENABLED=false</code></pre>
+    <ul>
+      <li>停止正在跑的脚本或 screen。</li>
+      <li>去 Polymarket 的 <code>Portfolio -> Open</code> 检查是否有不需要的买单。</li>
+      <li>已经持有的仓位可以继续保留卖单。</li>
+      <li>比赛结束后不能再补买单。</li>
+    </ul>
+
+    <h2>8. 每次运行前检查</h2>
+    <ul>
+      <li>市场没有结束。</li>
+      <li>整场、Game 1、Game 2 没有选错。</li>
+      <li>方向没有选错，比如 DK 和 Gen.G。</li>
+      <li><code>TOKEN_ID</code> 是正确 outcome token。</li>
+      <li><code>SHARE_AMOUNT</code> 已按投入金额换算。</li>
+      <li><code>EXIT_PRICE</code> 已填写。</li>
+      <li>运行后去 Polymarket Open 页面确认订单。</li>
+    </ul>
+
+    <h2>9. 最高优先级风控</h2>
+    <ul>
+      <li>不能只按 token 判断是否买过。</li>
+      <li>下单前必须查挂单、成交、持仓。</li>
+      <li>网络/API 不确定时暂停，不补单。</li>
+      <li>买入成交后必须同步挂卖单。</li>
+      <li>同 token 分层加仓时，新增份数必须单独补卖单。</li>
+      <li>比赛结束后禁止延迟买入。</li>
+    </ul>
+
+    <h2>10. 你发给 Codex 的模板</h2>
+    <pre><code>市场链接：
+买哪个市场：整场 / Game 1 / Game 2 / 其他
+买哪一边：
+买入价：
+投入金额：
+卖出价：
+是否分层：</code></pre>
+  </main>
+</body>
+</html>
