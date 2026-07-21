@@ -25,6 +25,7 @@ from typing import Any
 import httpx
 import trading
 from config import ConfigGuard, TradingParams
+from py_clob_client_v2.clob_types import TradeParams
 from strategy import PositionData, should_enter
 
 
@@ -45,6 +46,10 @@ class BotRuntime:
         self._exit_order_baselines: dict[str, float] = {}
         self._open_orders_sig: str = ""
         self._cycle = 0
+        # SELL 下单失败退避：token_id -> 连续失败次数。连续失败 >= 阈值时
+        # 跳过 exit protection 下单，避免余额不足时连续 400 重试。
+        self._failed_exit_attempts: dict[str, int] = {}
+        self._exit_backoff_threshold = 2
 
         self._stop = threading.Event()
         self._lock = threading.RLock()
@@ -232,23 +237,52 @@ class BotRuntime:
         baseline_remaining = self._exit_order_baselines.get(token_id, 0.0)
         protected_size = max(0.0, exit_remaining - baseline_remaining)
         if protected_size + 0.05 >= position.size:
+            # 已有匹配卖单覆盖持仓 → 重置失败计数（状态恢复正常）
+            self._failed_exit_attempts[token_id] = 0
             print(f"[runtime] exit protected — sell order already exists for {active.display()}")
             return False
+
+        # 退避检查：连续失败达阈值时跳过下单，避免余额不足连续 400
+        failures = self._failed_exit_attempts.get(token_id, 0)
+        if failures >= self._exit_backoff_threshold:
+            print(
+                f"[runtime] exit backed off — {failures} consecutive failures for "
+                f"{active.display()}; manual intervention required"
+            )
+            return True
 
         missing_size = max(0.0, position.size - protected_size)
         print(f"[runtime] exit protection — placing SELL for {missing_size} {active.display()} at {t.exit_price}")
         resp = trading.exit_position(
             self._client, token_id, "SELL", missing_size, t.exit_price
         )
-        self._remember_order_id(resp, self._exit_order_ids)
+        if resp is None:
+            # 下单失败（如余额不足 400）→ 累计失败次数
+            self._failed_exit_attempts[token_id] = failures + 1
+            print(
+                f"[runtime] exit order failed — attempt {failures + 1}/"
+                f"{self._exit_backoff_threshold} for {active.display()}"
+            )
+        else:
+            # 下单成功 → 重置失败计数
+            self._failed_exit_attempts[token_id] = 0
+            self._remember_order_id(resp, self._exit_order_ids)
         return True
 
     # ------------------------------------------------------------------ #
     # Fill detection + position tracking
     # ------------------------------------------------------------------ #
     def _detect_fills(self, t: TradingParams) -> bool:
+        # 用 asset_id 按 token 过滤，避免拉取全市场公开成交流水（实测
+        # maker_address 参数服务端过滤无效，仅 asset_id 有效）。
+        active = t.active_market()
+        token_id = active.token_id if active else ""
         try:
-            raw_trades = self._client.get_trades() if self._client else []
+            if self._client:
+                params = TradeParams(asset_id=token_id) if token_id else None
+                raw_trades = self._client.get_trades(params=params) if params else self._client.get_trades()
+            else:
+                raw_trades = []
         except Exception as exc:  # noqa: BLE001
             print(f"[runtime] get_trades failed: {exc}")
             return False
@@ -491,16 +525,14 @@ class BotRuntime:
         size: float,
         price: float,
     ) -> bool:
-        order_id = str(
-            trade.get("order_id")
-            or trade.get("taker_order_id")
-            or trade.get("maker_order_id")
-            or ""
-        )
-        if side.startswith("B") and order_id and self._entry_order_ids:
-            return order_id in self._entry_order_ids
-        if side.startswith("S") and order_id and self._exit_order_ids:
-            return order_id in self._exit_order_ids
+        # 收集 trade 涉及的所有 order_id（taker + 所有 maker）。
+        # CLOB v2 Trade 对象无顶层 order_id，分散在 taker_order_id 和
+        # maker_orders[].order_id 中。任一命中 bot 的 order bucket 即为 managed。
+        trade_order_ids = _extract_trade_order_ids(trade)
+        if side.startswith("B") and trade_order_ids and self._entry_order_ids:
+            return bool(trade_order_ids & self._entry_order_ids)
+        if side.startswith("S") and trade_order_ids and self._exit_order_ids:
+            return bool(trade_order_ids & self._exit_order_ids)
 
         if side.startswith("B"):
             target_notional = t.share_amount * t.entry_price
@@ -583,3 +615,28 @@ def _close_enough(
     if actual is None or expected is None:
         return False
     return abs(actual - expected) <= max(min_abs, abs(expected) * rel)
+
+
+def _extract_trade_order_ids(trade: dict[str, Any]) -> set[str]:
+    """从 CLOB v2 Trade 对象收集所有相关 order_id。
+
+    Trade 对象无顶层 order_id，分散在：
+    - taker_order_id：taker 侧订单 id
+    - maker_orders[].order_id：maker 侧订单 id 数组
+    - 兼容旧字段 order_id / orderID（如有）
+
+    bot 的限价单成交时通常是 maker，故必须检查 maker_orders 数组，
+    否则 maker 成交会漏检，导致 position 不更新、重复挂 SELL 等问题。
+    """
+    ids: set[str] = set()
+    taker_id = trade.get("taker_order_id") or trade.get("order_id") or trade.get("orderID")
+    if taker_id:
+        ids.add(str(taker_id))
+    maker_orders = trade.get("maker_orders") or []
+    if isinstance(maker_orders, list):
+        for mo in maker_orders:
+            if isinstance(mo, dict):
+                mid = mo.get("order_id") or mo.get("orderID")
+                if mid:
+                    ids.add(str(mid))
+    return ids
