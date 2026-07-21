@@ -123,8 +123,12 @@ class Config:
     chain_id: int = 137
     signature_type: int = 0
     funder: str = ""
+    clob_api_key: str = ""
+    clob_api_secret: str = ""
+    clob_api_passphrase: str = ""
 
     # Runtime
+    trading_enabled: bool = True
     poll_interval: int = 30
     status_every_cycles: int = 20
     config_file: str = "config.json"
@@ -147,6 +151,10 @@ class Config:
             chain_id=_env_int("CHAIN_ID", 137),
             signature_type=_env_int("SIGNATURE_TYPE", 0),
             funder=_env("FUNDER"),
+            clob_api_key=_env("CLOB_API_KEY"),
+            clob_api_secret=_env("CLOB_SECRET"),
+            clob_api_passphrase=_env("CLOB_PASSPHRASE"),
+            trading_enabled=_env_bool("TRADING_ENABLED", True),
             poll_interval=_env_int("POLL_INTERVAL", 30),
             status_every_cycles=_env_int("STATUS_EVERY_CYCLES", 20),
             config_file=_env("CONFIG_FILE", "config.json") or "config.json",

@@ -21,17 +21,23 @@ V1→V2 migration (Apr 2026):
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
+import httpx
 from py_clob_client_v2 import (
+    ApiCreds,
     ClobClient,
     OrderArgs,
     OrderType,
     PartialCreateOrderOptions,
     Side,
 )
+from py_clob_client_v2.http_helpers import helpers as clob_http_helpers
 
 from strategy import MarketData
+
+clob_http_helpers._http_client = httpx.Client(http2=False, timeout=30)
 
 
 # --------------------------------------------------------------------------- #
@@ -40,8 +46,9 @@ from strategy import MarketData
 def init_client(config) -> ClobClient:
     """Create an authenticated V2 ClobClient.
 
-    1. Create an un-authenticated client to derive L2 API credentials.
-    2. Create a fully-authenticated client with L1 + L2 auth.
+    Prefer explicit CLOB API credentials from .env. This matters for
+    POLY_1271/deposit-wallet accounts because auto-derived credentials can bind
+    to the owner EOA while orders are signed for the deposit wallet.
     """
     if not config.private_key:
         raise RuntimeError("PRIVATE_KEY not configured; cannot initialise CLOB client")
@@ -56,13 +63,31 @@ def init_client(config) -> ClobClient:
     if config.funder:
         kwargs["funder"] = config.funder
 
-    # Step 1 — derive L2 API credentials.
-    unauth = ClobClient(**kwargs)
-    creds = unauth.create_or_derive_api_key()
+    has_manual_creds = all(
+        (config.clob_api_key, config.clob_api_secret, config.clob_api_passphrase)
+    )
+    if has_manual_creds:
+        creds = ApiCreds(
+            api_key=config.clob_api_key,
+            api_secret=config.clob_api_secret,
+            api_passphrase=config.clob_api_passphrase,
+        )
+    else:
+        unauth = ClobClient(**kwargs)
+        last_error: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                creds = unauth.create_or_derive_api_key()
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                print(f"[trading] API key derive failed ({attempt}/3): {exc}")
+                if attempt < 3:
+                    time.sleep(attempt * 3)
+        else:
+            raise last_error or RuntimeError("could not derive CLOB API credentials")
 
-    # Step 2 — fully authenticated client.
     client = ClobClient(**kwargs, creds=creds)
-
     try:
         address = client.get_address()
     except Exception:
