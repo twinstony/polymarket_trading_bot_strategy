@@ -16,6 +16,7 @@ import sys
 import trading
 from bot import TelegramCommandBot
 from config import Config, ConfigGuard
+from market_setup import run_interactive_setup
 from notifications import NotifierManager
 from runtime import BotRuntime
 
@@ -50,6 +51,11 @@ def main() -> int:
         f"[main] notifications: telegram={notifier.telegram_targets} bot(s), "
         f"webhook={notifier.webhook_targets} url(s)"
     )
+
+    # 交互式市场配置（启动时选择市场与参数，回车跳过使用 .env 现有配置）-------
+    if not run_interactive_setup(config, guard):
+        print("[main] 未完成市场配置，退出")
+        return 1
 
     # Runtime loop ----------------------------------------------------------
     runtime = BotRuntime(client, guard, notifier)
