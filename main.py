@@ -18,6 +18,8 @@ from bot import TelegramCommandBot
 from config import Config, ConfigGuard
 from market_setup import run_interactive_setup
 from notifications import NotifierManager
+from persistence import Persistence
+from recovery import Recovery
 from runtime import BotRuntime
 
 
@@ -57,8 +59,30 @@ def main() -> int:
         print("[main] 未完成市场配置，退出")
         return 1
 
+    # Persistence + Recovery ------------------------------------------------
+    persistence = Persistence(config.db_path)
+    persistence.open()
+    recovery = Recovery(persistence, client, config, notifier)
+    recovery.start_session()
+    recovery.show_state_summary()
+    mode = recovery.countdown_window(config.recovery_timeout_sec)
+    if mode == "FRESH_START":
+        # fresh_start() 内部已包含 reconcile + handle_unfinished + check_critical
+        recovery.fresh_start()
+    else:  # RESUME
+        recovery.archive_old_data()
+        recovery.reconcile(mode="RESUME")
+        recovery.handle_unfinished_orders()
+        recovery.check_critical_and_wait()
+
     # Runtime loop ----------------------------------------------------------
-    runtime = BotRuntime(client, guard, notifier)
+    runtime = BotRuntime(
+        client,
+        guard,
+        notifier,
+        persistence=persistence,
+        session_id=recovery._session_id,
+    )
 
     # Interactive Telegram command bot -------------------------------------
     command_bot: TelegramCommandBot | None = None
@@ -68,6 +92,7 @@ def main() -> int:
             config_guard=guard,
             status_provider=runtime.status_snapshot,
             allowed_user_ids=config.telegram_allowed_user_ids,
+            persistence=persistence,  # 新增
         )
         command_bot.notifier = notifier  # enables config-change push notifications
         command_bot.start()
@@ -89,6 +114,15 @@ def main() -> int:
         runtime.stop()
         if command_bot:
             command_bot.stop()
+        # 记录会话结束 + 关闭 DB（v4: 持久化生命周期闭环）
+        try:
+            recovery.finish_session("STOPPED", runtime._cycle)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[main] finish_session failed: {exc}")
+        try:
+            persistence.close()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[main] persistence.close failed: {exc}")
 
     signal.signal(signal.SIGINT, _handle_signal)
     if hasattr(signal, "SIGTERM"):

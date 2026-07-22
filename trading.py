@@ -35,6 +35,7 @@ from py_clob_client_v2 import (
 )
 from py_clob_client_v2.http_helpers import helpers as clob_http_helpers
 
+from order_state import OrderRateLimitError, OrderTimeoutError
 from strategy import MarketData
 
 clob_http_helpers._http_client = httpx.Client(http2=False, timeout=30)
@@ -124,7 +125,18 @@ def _post_limit_order(
     price: float,
     label: str,
 ) -> dict[str, Any] | None:
-    """Shared helper for enter / exit limit orders."""
+    """Shared helper for enter / exit limit orders.
+
+    Exception classification (v3.0 §1.2):
+    - ``httpx.TimeoutException`` / ``httpx.ConnectError`` -> ``OrderTimeoutError``
+      (order may have reached the exchange; caller marks TIMEOUT_UNCONFIRMED)
+    - ``httpx.HTTPStatusError``:
+        * 5xx -> ``OrderTimeoutError`` (server error, retry via reconciliation)
+        * 429 -> ``OrderRateLimitError`` (caller backs off 60s)
+        * other 4xx -> return None (caller marks REJECTED)
+    - Unknown ``Exception`` -> ``OrderTimeoutError`` (conservative: may have
+      reached the exchange; reconcile next cycle rather than lose the order)
+    """
     if client is None:
         raise RuntimeError("Client not initialised")
     side_str = "BUY" if side == Side.BUY else "SELL"
@@ -147,9 +159,23 @@ def _post_limit_order(
         )
         print(f"[trading] Order placed: {resp}")
         return resp if isinstance(resp, dict) else {"response": str(resp)}
-    except Exception as exc:
-        print(f"[trading] Failed to {label.lower()}: {exc}")
+    except httpx.TimeoutException as exc:
+        raise OrderTimeoutError(f"timeout during {label}: {exc}") from exc
+    except httpx.ConnectError as exc:
+        raise OrderTimeoutError(f"connect error during {label}: {exc}") from exc
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code if exc.response else 0
+        if status == 429:
+            raise OrderRateLimitError(f"rate limited during {label}: {exc}") from exc
+        if 500 <= status < 600:
+            raise OrderTimeoutError(f"server {status} during {label}: {exc}") from exc
+        # 4xx (non-429): balance insufficient, invalid price, etc.
+        print(f"[trading] {label} rejected by API {status}: {exc}")
         return None
+    except Exception as exc:
+        # Unknown error: conservatively treat as TIMEOUT_UNCONFIRMED because
+        # we cannot confirm whether the order reached the exchange.
+        raise OrderTimeoutError(f"unknown error during {label}: {exc}") from exc
 
 
 def enter_position(

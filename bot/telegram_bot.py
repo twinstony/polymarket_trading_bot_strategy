@@ -34,12 +34,14 @@ class TelegramCommandBot:
         status_provider: StatusProvider,
         allowed_user_ids: set[int] | None = None,
         timeout: float = 35.0,
+        persistence=None,
     ):
         self._token = token
         self._config_guard = config_guard
         self._status_provider = status_provider
         self._allowed = allowed_user_ids or set()
         self._timeout = timeout
+        self._persistence = persistence  # 新增
         self._offset = 0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -128,6 +130,8 @@ class TelegramCommandBot:
             return self._set_amount(args)
         if cmd == "/triggermode":
             return self._set_conditional_entry(args)
+        if cmd == "/reset_entry":
+            return self._reset_entry(args)
         return (
             f"Unknown command: {cmd}\n\n{self._help()}"
         )
@@ -144,7 +148,8 @@ class TelegramCommandBot:
             "/takeprofit &lt;pct|off&gt; - set take-profit (e.g. 10 = 10%)\n"
             "/stoploss &lt;pct|off&gt; - set stop-loss (e.g. 10 = 10%)\n"
             "/amount &lt;n&gt; - set order size (shares)\n"
-            "/conditional_entry on|off - toggle entry mode (on=wait for ask ≤ price, off=place order immediately)"
+            "/conditional_entry on|off - toggle entry mode (on=wait for ask ≤ price, off=place order immediately)\n"
+            "/reset_entry &lt;token_id&gt; - clear entry_attempted flag (allow re-entry)"
         )
 
     def _status(self) -> str:
@@ -283,6 +288,27 @@ class TelegramCommandBot:
         label = "ON (wait for best_ask ≤ entry_price)" if new_mode else "OFF (place order immediately)"
         self._notify_change(f"Conditional entry set to {label}")
         return f"✅ Conditional entry = {label}"
+
+    def _reset_entry(self, args: list[str]) -> str:
+        """Clear entry_attempted flag for a token, allowing re-entry."""
+        if self._persistence is None:
+            return "❌ Persistence layer not available. Cannot reset entry flag."
+        if not args:
+            return "Usage: /reset_entry <token_id>\nClears the entry_attempted flag so the bot can re-enter this token."
+        token_id = args[0]
+        try:
+            pos = self._persistence.get_position(token_id)
+            self._persistence.set_entry_attempted(token_id, False)
+            if pos:
+                return (
+                    f"✅ entry_attempted cleared for token {token_id[:16]}...\n"
+                    f"   position size={pos.size}, avg={pos.avg_price}\n"
+                    f"   The bot can now re-enter this token."
+                )
+            else:
+                return f"✅ entry_attempted cleared for token {token_id[:16]}...\n   (no position record found)"
+        except Exception as exc:
+            return f"❌ Failed to reset entry flag: {exc}"
 
     # ------------------------------------------------------------------ #
     # Telegram HTTP helpers

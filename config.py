@@ -142,6 +142,15 @@ class Config:
     # Mutable trading parameters
     trading: TradingParams = field(default_factory=TradingParams)
 
+    # Persistence / recovery
+    db_path: str = "data/bot_state.sqlite"
+    recovery_timeout_sec: int = 15
+    archive_retention_days: int = 30
+    seen_trades_retention_days: int = 7
+    recon_retention_days: int = 90
+    archive_every_cycles: int = 100
+    remote_check_interval: int = 5
+
     # --- loading -----------------------------------------------------------
     @classmethod
     def load(cls) -> "Config":
@@ -164,6 +173,13 @@ class Config:
                 for uid in _env("TELEGRAM_ALLOWED_USER_IDS").split(",")
                 if uid.strip().isdigit()
             },
+            db_path=_env("DB_PATH", "data/bot_state.sqlite") or "data/bot_state.sqlite",
+            recovery_timeout_sec=_env_int("RECOVERY_TIMEOUT_SEC", 15),
+            archive_retention_days=_env_int("ARCHIVE_RETENTION_DAYS", 30),
+            seen_trades_retention_days=_env_int("SEEN_TRADES_RETENTION_DAYS", 7),
+            recon_retention_days=_env_int("RECON_RETENTION_DAYS", 90),
+            archive_every_cycles=_env_int("ARCHIVE_EVERY_CYCLES", 100),
+            remote_check_interval=_env_int("REMOTE_CHECK_INTERVAL", 5),
         )
 
         # Telegram notification bots

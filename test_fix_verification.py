@@ -19,6 +19,8 @@ from unittest.mock import MagicMock
 sys.path.insert(0, ".")
 
 from config import Market, TradingParams
+from order_state import OrderStatus
+from persistence import OrderRecord, Persistence
 from runtime import BotRuntime, _to_float, _close_enough
 
 
@@ -157,8 +159,28 @@ def make_runtime(trades: list[dict], open_orders: list[dict]) -> BotRuntime:
     guard.snapshot.return_value = t
     guard.active_market.return_value = market
 
-    rt = BotRuntime(client, guard, notifier=None)
+    # v4: 持久化改造后，bot 挂单状态存储在 DB 的 orders 表中。
+    # 使用内存 SQLite 模拟"bot 已有挂单"的状态。
+    db = Persistence(":memory:")
+    db.open()
+    rt = BotRuntime(client, guard, notifier=None, persistence=db, session_id="test-session")
+    # orders.session_id 有外键引用 sessions.session_id，需先插入一条 session 记录
+    db.insert_session(rt._session_id, "TEST")
     return rt
+
+
+def _insert_bot_order(rt: BotRuntime, order_id: str, side: str) -> None:
+    """向 DB 插入一条 bot 挂单记录（替代直接设置 _entry_order_ids/_exit_order_ids）。"""
+    rt._db.insert_order(OrderRecord(
+        intent_id=f"intent-{order_id}",
+        session_id=rt._session_id,
+        token_id=TOKEN_ID,
+        side=side,
+        price=0.15 if side == "BUY" else 0.25,
+        size=5.0,
+        status=OrderStatus.PLACED.value,
+        order_id=order_id,
+    ))
 
 
 # --------------------------------------------------------------------------- #
@@ -229,29 +251,29 @@ def test_apply_fill_with_fixed_logic():
     print("=" * 60)
 
     rt = make_runtime([], [])
-    rt._entry_order_ids = {"0xBOT_BUY_001"}
-    rt._exit_order_ids = {"0xBOT_SELL_001"}
+    _insert_bot_order(rt, "0xBOT_BUY_001", "BUY")
+    _insert_bot_order(rt, "0xBOT_SELL_001", "SELL")
     t = rt._guard.snapshot()
 
     # 场景 A: BUY as maker 成交 → 持仓应增加 5.0
-    rt._positions = {}
+    rt._positions_cache = {}
     # 模拟修复后的 _apply_fill（用 trade_is_bot_managed_fixed 替代原 _trade_matches_current_intent）
     _apply_fill_with_fixed_match(rt, TRADE_BUY_AS_MAKER, t)
-    pos = rt._positions.get(TOKEN_ID, {})
+    pos = rt._positions_cache.get(TOKEN_ID, {})
     assert pos.get("size") == 5.0, f"BUY 成交后持仓应为 5.0, 实际 {pos.get('size')}"
     assert pos.get("avg_price") == 0.15, f"avg_price 应为 0.15, 实际 {pos.get('avg_price')}"
     print(f"  [PASS] BUY as maker 成交 → 持仓 {pos['size']} @ {pos['avg_price']}")
 
     # 场景 B: SELL as maker 成交 → 持仓应归零
     _apply_fill_with_fixed_match(rt, TRADE_SELL_AS_MAKER, t)
-    pos = rt._positions.get(TOKEN_ID, {})
+    pos = rt._positions_cache.get(TOKEN_ID, {})
     assert pos.get("size") == 0.0, f"SELL 成交后持仓应为 0.0, 实际 {pos.get('size')}"
     print(f"  [PASS] SELL as maker 成交 → 持仓归零为 {pos['size']}")
 
     # 场景 C: 别人的成交不应改变持仓
-    size_before = rt._positions.get(TOKEN_ID, {}).get("size", 0.0)
+    size_before = rt._positions_cache.get(TOKEN_ID, {}).get("size", 0.0)
     _apply_fill_with_fixed_match(rt, TRADE_OTHER_BUY, t)
-    size_after = rt._positions.get(TOKEN_ID, {}).get("size", 0.0)
+    size_after = rt._positions_cache.get(TOKEN_ID, {}).get("size", 0.0)
     assert size_after == size_before, f"别人的成交不应改变持仓: {size_before} → {size_after}"
     print(f"  [PASS] Other trade → 持仓不变 ({size_before} → {size_after})")
 
@@ -269,12 +291,20 @@ def _apply_fill_with_fixed_match(rt: BotRuntime, trade: dict, t: TradingParams):
     if active is None or token_id != active.token_id:
         return
 
+    # v4: 从 DB 查询 bot 的 entry/exit order_id 集合（替代已删除的 _entry_order_ids/_exit_order_ids）
+    entry_ids = {
+        o.order_id for o in rt._db.query_unfinished_orders(token_id=token_id, side="BUY") if o.order_id
+    }
+    exit_ids = {
+        o.order_id for o in rt._db.query_unfinished_orders(token_id=token_id, side="SELL") if o.order_id
+    }
+
     # ★ 用修复后的匹配逻辑替代原 _trade_matches_current_intent
-    if not trade_is_bot_managed_fixed(trade, rt._entry_order_ids, rt._exit_order_ids):
+    if not trade_is_bot_managed_fixed(trade, entry_ids, exit_ids):
         return
 
     with rt._lock:
-        pos = rt._positions.setdefault(token_id, {"size": 0.0, "avg_price": 0.0, "label": label})
+        pos = rt._positions_cache.setdefault(token_id, {"size": 0.0, "avg_price": 0.0, "label": label})
         if not label:
             pos["label"] = label
         if side.startswith("B"):

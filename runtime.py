@@ -11,13 +11,21 @@ Responsibilities (one cycle every ``POLL_INTERVAL`` seconds):
    pushing a fill notification for each new buy/sell.
 6. Detect open-order set changes and push the current open-orders summary.
 7. Periodically push a runtime status summary.
+8. Periodically check remote cancellations (v3.0 §5.3).
+9. Detect pending settlement markets (v3.0 §5.4).
 
 The runtime is also the source of truth the interactive Telegram bot queries
 through ``status_snapshot``.
+
+All trading state is persisted via the ``Persistence`` layer (SQLite + WAL).
+BUY and SELL paths are symmetric: both record a PENDING intent before the
+API call, classify exceptions (timeout/rate-limit/reject), and reconcile
+remote cancellations on the next cycle.
 """
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from typing import Any
@@ -25,35 +33,49 @@ from typing import Any
 import httpx
 import trading
 from config import ConfigGuard, TradingParams
+from order_state import (
+    OrderRateLimitError,
+    OrderStatus,
+    OrderTimeoutError,
+    new_intent_id,
+)
+from persistence import FillRecord, OrderRecord, PositionRecord
 from py_clob_client_v2.clob_types import TradeParams
 from strategy import PositionData, should_enter
 
 
 class BotRuntime:
-    def __init__(self, client, config_guard: ConfigGuard, notifier):
+    def __init__(
+        self,
+        client,
+        config_guard: ConfigGuard,
+        notifier,
+        persistence=None,
+        session_id: str | None = None,
+    ):
         self._client = client
         self._guard = config_guard
         self._notifier = notifier
+        self._db = persistence
+        self._session_id = session_id or "no-session"
 
-        # Local state --------------------------------------------------------
-        # token_id -> {"size": float, "avg_price": float, "label": str}
-        self._positions: dict[str, dict[str, Any]] = {}
-        self._seen_trade_ids: set[str] = set()
-        self._entry_attempted_tokens: set[str] = set()
-        self._entry_order_ids: set[str] = set()
-        self._exit_order_ids: set[str] = set()
-        self._entry_position_baselines: dict[str, tuple[float, float]] = {}
-        self._exit_order_baselines: dict[str, float] = {}
+        # Memory cache (mirror of DB for hot-path reads). The DB is the
+        # source of truth; these caches are best-effort and refreshed from
+        # the DB at startup and after each write.
+        self._positions_cache: dict[str, dict[str, Any]] = {}
         self._open_orders_sig: str = ""
         self._cycle = 0
-        # SELL 下单失败退避：token_id -> 连续失败次数。连续失败 >= 阈值时
-        # 跳过 exit protection 下单，避免余额不足时连续 400 重试。
-        self._failed_exit_attempts: dict[str, int] = {}
         self._exit_backoff_threshold = 2
+        # DB unavailable consecutive cycles counter (for Layer 3 protection)
+        self._db_unavailable_cycles = 0
 
         self._stop = threading.Event()
         self._lock = threading.RLock()
         self._thread: threading.Thread | None = None
+
+        # Load persisted state into memory cache at startup
+        if self._db is not None:
+            self._load_state_from_db()
 
     # ------------------------------------------------------------------ #
     # Lifecycle
@@ -76,6 +98,48 @@ class BotRuntime:
         self._loop()
 
     # ------------------------------------------------------------------ #
+    # State loading / DB integration
+    # ------------------------------------------------------------------ #
+    def _load_state_from_db(self) -> None:
+        """Load persisted state into memory cache at startup."""
+        if self._db is None:
+            return
+        try:
+            for p in self._db.get_all_positions():
+                self._positions_cache[p.token_id] = {
+                    "size": p.size,
+                    "avg_price": p.avg_price,
+                    "label": p.label,
+                }
+            print(f"[runtime] loaded {len(self._positions_cache)} position(s) from DB")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[runtime] failed to load state from DB: {exc}")
+
+    def _db_write_safe(self, action_name: str, action) -> bool:
+        """Execute a DB write with Layer 2/3 protection.
+
+        Returns True on success, False on failure. On persistent failure,
+        marks DB unavailable and triggers Telegram alert.
+        """
+        if self._db is None:
+            return False
+        try:
+            action()
+            self._db_unavailable_cycles = 0
+            return True
+        except Exception as exc:
+            print(f"[runtime] DB write failed ({action_name}): {exc}")
+            self._db_unavailable_cycles += 1
+            if self._db_unavailable_cycles >= 3:
+                self._db.mark_unavailable(self._cycle)
+                if self._notifier and self._notifier.enabled:
+                    self._notifier.notify(
+                        f"⚠ DB unavailable (cycle {self._cycle}). "
+                        f"Degraded to memory-only mode."
+                    )
+            return False
+
+    # ------------------------------------------------------------------ #
     # Status snapshot (consumed by the Telegram command bot)
     # ------------------------------------------------------------------ #
     def status_snapshot(self) -> dict[str, Any]:
@@ -88,7 +152,7 @@ class BotRuntime:
                     "size": p.get("size", 0.0),
                     "avg_price": p.get("avg_price", 0.0),
                 }
-                for tid, p in self._positions.items()
+                for tid, p in self._positions_cache.items()
                 if p.get("size", 0.0) > 0
             ]
         try:
@@ -110,6 +174,8 @@ class BotRuntime:
     def _loop(self) -> None:
         interval = max(1, self._guard.config.poll_interval)
         status_every = max(1, self._guard.config.status_every_cycles)
+        archive_every = max(0, self._guard.config.archive_every_cycles)
+        remote_check_interval = max(1, self._guard.config.remote_check_interval)
 
         active = self._guard.active_market()
         if self._notifier and self._notifier.enabled:
@@ -118,9 +184,36 @@ class BotRuntime:
         while not self._stop.is_set():
             self._cycle += 1
             try:
+                # DB Layer 3 protection: if DB unavailable for too long, pause trading
+                if self._db is not None and not self._db.is_db_available():
+                    if self._db_unavailable_cycles >= 5:
+                        print(
+                            f"[runtime] DB unavailable for {self._db_unavailable_cycles} cycles; "
+                            f"pausing trading, monitoring only"
+                        )
+                    else:
+                        # Periodic recovery attempt
+                        if self._cycle % 30 == 0:
+                            if self._db.try_recover(self._cycle):
+                                self._db_unavailable_cycles = 0
                 self._cycle_once()
             except Exception as exc:  # noqa: BLE001 - never let the loop die
                 print(f"[runtime] cycle {self._cycle} error: {exc}")
+
+            # Periodic archival
+            if (
+                self._db is not None
+                and archive_every > 0
+                and self._cycle % archive_every == 0
+            ):
+                try:
+                    self._db.archive_old_data(
+                        order_retention_days=self._guard.config.archive_retention_days,
+                        seen_trades_retention_days=self._guard.config.seen_trades_retention_days,
+                        recon_retention_days=self._guard.config.recon_retention_days,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[runtime] archive failed: {exc}")
 
             if self._cycle % status_every == 0 and self._notifier and self._notifier.enabled:
                 self._push_status()
@@ -149,10 +242,21 @@ class BotRuntime:
             return
         self._reconcile_position_from_portfolio(t)
 
-        # 2. Fetch live market data.
+        # 2. Periodic remote cancellation check (v3.0 §5.3)
+        self._check_remote_cancellations(t)
+
+        # 3. Fetch live market data.
         market_data = trading.get_market_data(self._client, token_id)
 
-        # 3. Exit protection comes before any new entry. If the bot sees a
+        # 4. Pending settlement detection (v3.0 §5.4)
+        if self._check_pending_settlement(t, market_data):
+            # Market in pending settlement: skip entry but keep SELL protection
+            position = self._get_position(token_id)
+            if not position.has_position:
+                self._maybe_notify_open_orders(t)
+                return
+
+        # 5. Exit protection comes before any new entry. If the bot sees a
         # managed position, it must keep a matching SELL order working.
         position = self._get_position(token_id)
         if position.has_position:
@@ -162,7 +266,7 @@ class BotRuntime:
             self._maybe_notify_open_orders(t)
             return
 
-        # 4. Entry check (only when not already holding this token).
+        # 6. Entry check (only when not already holding this token).
         if not position.has_position:
             if t.exit_price is None:
                 print(
@@ -180,7 +284,7 @@ class BotRuntime:
                 print(f"[runtime] entry paused — could not confirm open orders for {active.display()}")
             elif has_entry:
                 print(f"[runtime] entry skipped — matching buy order already exists for {active.display()}")
-            elif token_id in self._entry_attempted_tokens:
+            elif self._db is not None and self._db.is_entry_attempted(token_id):
                 print(f"[runtime] entry skipped — entry already attempted for {active.display()}")
             else:
                 if t.conditional_entry:
@@ -190,11 +294,7 @@ class BotRuntime:
                         if not self._remember_layer_baseline(t, token_id):
                             print(f"[runtime] entry paused — could not record baseline for {active.display()}")
                             return
-                        self._entry_attempted_tokens.add(token_id)
-                        resp = trading.enter_position(
-                            self._client, token_id, "BUY", t.share_amount, t.entry_price
-                        )
-                        self._remember_order_id(resp, self._entry_order_ids)
+                        self._place_buy_order(t, active, token_id)
                     else:
                         print(f"[runtime] no entry signal for {active.display()}")
                 else:
@@ -203,14 +303,196 @@ class BotRuntime:
                     if not self._remember_layer_baseline(t, token_id):
                         print(f"[runtime] entry paused — could not record baseline for {active.display()}")
                         return
-                    self._entry_attempted_tokens.add(token_id)
-                    resp = trading.enter_position(
-                        self._client, token_id, "BUY", t.share_amount, t.entry_price
-                    )
-                    self._remember_order_id(resp, self._entry_order_ids)
+                    self._place_buy_order(t, active, token_id)
 
-        # 5. Open-orders change notification.
+        # 7. Open-orders change notification.
         self._maybe_notify_open_orders(t)
+
+    # ------------------------------------------------------------------ #
+    # Remote cancellation & pending settlement detection (v3.0 §5.3 / §5.4)
+    # ------------------------------------------------------------------ #
+    def _check_remote_cancellations(self, t: TradingParams) -> None:
+        """每 remote_check_interval 轮检测远端取消的本地 PLACED 订单。
+
+        对比本地 PLACED/PARTIAL 订单与远端 open_orders：
+        - 远端不存在的订单调用 ``_confirm_order_canceled_or_filled`` 判断是成交还是取消。
+        - BUY 取消 → set_entry_attempted(True) 阻止重挂。
+        - SELL 取消 → 标 CANCELED，下轮 ``_ensure_exit_order`` 自动补挂。
+        """
+        if self._db is None:
+            return
+        interval = max(1, self._guard.config.remote_check_interval)
+        if self._cycle % interval != 0:
+            return
+        try:
+            remote_open = trading.get_open_orders(self._client) or []
+        except Exception as exc:  # noqa: BLE001
+            print(f"[runtime] remote cancel check skipped — API error: {exc}")
+            return
+        remote_ids = {
+            str(o.get("id") or o.get("order_id") or "") for o in remote_open
+        }
+        local_active = self._db.query_unfinished_orders()
+        for order in local_active:
+            if order.order_id and order.order_id not in remote_ids:
+                self._confirm_order_canceled_or_filled(order)
+
+    def _confirm_order_canceled_or_filled(self, order: OrderRecord) -> None:
+        """判断订单是成交还是取消，更新 DB 状态。
+
+        调用 ``get_recent_trades`` 检查是否有该 order_id 的成交记录：
+        - 有成交 → 标 FILLED/PARTIAL + 更新 filled_size。
+        - 无成交 → 标 CANCELED + BUY 阻止重挂 / SELL 告警补挂。
+        """
+        try:
+            trades = trading.get_recent_trades(self._client) or []
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[runtime] confirm order {order.intent_id[:8]} failed — API error: {exc}"
+            )
+            return
+        # 检查是否有该 order_id 的成交
+        matched_size = 0.0
+        for tr in trades:
+            trade_order_ids = _extract_trade_order_ids(tr)
+            if order.order_id in trade_order_ids:
+                matched_size += float(tr.get("size", 0) or 0)
+        if matched_size > 0:
+            # 部分或全部成交
+            new_status = (
+                OrderStatus.FILLED.value
+                if matched_size >= order.size - 0.01
+                else OrderStatus.PARTIAL.value
+            )
+            self._db_write_safe(
+                "order filled (remote check)",
+                lambda: self._db.update_order_status(
+                    order.intent_id, new_status, filled_size=matched_size
+                ),
+            )
+        else:
+            # 取消
+            self._db_write_safe(
+                "order canceled (remote check)",
+                lambda: self._db.update_order_status(
+                    order.intent_id,
+                    OrderStatus.CANCELED.value,
+                    notes="remote cancel detected",
+                ),
+            )
+            if order.side == "BUY":
+                self._db_write_safe(
+                    "set_entry_attempted (BUY canceled)",
+                    lambda: self._db.set_entry_attempted(order.token_id, True),
+                )
+                if self._notifier and self._notifier.enabled:
+                    self._notifier.notify(
+                        f"⚠ BUY 单 {order.intent_id[:8]} 被远端取消，已阻止重挂。"
+                    )
+            else:  # SELL
+                if self._notifier and self._notifier.enabled:
+                    self._notifier.notify(
+                        f"⚠ SELL 单 {order.intent_id[:8]} 被远端取消，下轮将自动补挂。"
+                    )
+
+    def _check_pending_settlement(self, t: TradingParams, market_data) -> bool:
+        """检测市场是否进入 pending settlement。
+
+        判据：``best_ask is None`` 且 ``best_bid >= 0.999``。
+        返回 True 表示跳过入场（SELL 保护仍继续）。
+        """
+        if market_data is None:
+            return False
+        if (
+            market_data.best_ask is None
+            and market_data.best_bid is not None
+            and market_data.best_bid >= 0.999
+        ):
+            active = t.active_market()
+            if active and self._db is not None:
+                if not self._db.is_entry_attempted(active.token_id):
+                    self._db_write_safe(
+                        "set_entry_attempted (settlement)",
+                        lambda: self._db.set_entry_attempted(active.token_id, True),
+                    )
+                    if self._notifier and self._notifier.enabled:
+                        self._notifier.notify(
+                            f"⚠ {active.display()} 进入 pending settlement "
+                            f"(bid={market_data.best_bid}, ask=None)。已阻止入场，等待结算。"
+                        )
+            return True
+        return False
+
+    # ------------------------------------------------------------------ #
+    # BUY order placement (symmetric with SELL)
+    # ------------------------------------------------------------------ #
+    def _place_buy_order(self, t: TradingParams, active, token_id: str) -> None:
+        """Record PENDING intent, call API, classify exceptions, update DB.
+
+        Symmetric with ``_place_sell_order`` (v3.0 §2.3).
+        """
+        intent_id = new_intent_id()
+        order_record = OrderRecord(
+            intent_id=intent_id,
+            session_id=self._session_id,
+            token_id=token_id,
+            side="BUY",
+            price=t.entry_price,
+            size=t.share_amount,
+            status=OrderStatus.PENDING.value,
+            label=active.label,
+        )
+        self._db_write_safe("insert BUY PENDING", lambda: self._db.insert_order(order_record))
+        self._db_write_safe(
+            "set_entry_attempted",
+            lambda: self._db.set_entry_attempted(token_id, True),
+        )
+
+        print(f"[runtime] placing BUY {t.share_amount} @ {t.entry_price} for {active.display()}")
+        try:
+            resp = trading.enter_position(
+                self._client, token_id, "BUY", t.share_amount, t.entry_price
+            )
+        except OrderTimeoutError as exc:
+            # Network timeout: order may have reached exchange; mark TIMEOUT_UNCONFIRMED
+            self._db_write_safe(
+                "BUY TIMEOUT_UNCONFIRMED",
+                lambda: self._db.update_order_status(
+                    intent_id, OrderStatus.TIMEOUT_UNCONFIRMED.value, notes=str(exc)
+                ),
+            )
+            print(f"[runtime] BUY timeout — will reconcile next cycle: {exc}")
+            return
+        except OrderRateLimitError as exc:
+            # Rate limited: keep PENDING, back off 60s
+            self._db_write_safe(
+                "BUY rate limited",
+                lambda: self._db.update_order_status(
+                    intent_id, OrderStatus.PENDING.value, notes=f"rate limited: {exc}"
+                ),
+            )
+            print(f"[runtime] BUY rate limited — backing off 60s: {exc}")
+            time.sleep(60)
+            return
+
+        if resp is None:
+            # 4xx rejected (balance insufficient, invalid price, etc.)
+            self._db_write_safe(
+                "BUY REJECTED",
+                lambda: self._db.update_order_status(
+                    intent_id, OrderStatus.REJECTED.value, notes="API rejected"
+                ),
+            )
+            print(f"[runtime] BUY rejected by API for {active.display()}")
+        else:
+            order_id = str(resp.get("orderID") or resp.get("order_id") or "")
+            self._db_write_safe(
+                "BUY PLACED",
+                lambda: self._db.update_order_status(
+                    intent_id, OrderStatus.PLACED.value, order_id=order_id
+                ),
+            )
+            print(f"[runtime] BUY placed for {active.display()} (order_id={order_id})")
 
     def _ensure_exit_order(
         self,
@@ -219,7 +501,11 @@ class BotRuntime:
         token_id: str,
         position: PositionData,
     ) -> bool:
-        """Return True when exit protection handled this cycle."""
+        """Return True when exit protection handled this cycle.
+
+        Symmetric with BUY path (v3.0 §2.2): records PENDING intent, calls
+        API, classifies exceptions, links to originating BUY via pair_intent_id.
+        """
         if t.exit_price is None:
             print(
                 "[runtime] CRITICAL — position exists but EXIT_PRICE is not configured; "
@@ -227,6 +513,17 @@ class BotRuntime:
             )
             return True
 
+        # 1. Check if there is already a working SELL intent in DB
+        if self._db is not None:
+            existing_sells = self._db.query_unfinished_orders(token_id=token_id, side="SELL")
+            if existing_sells:
+                print(
+                    f"[runtime] exit pending — {len(existing_sells)} SELL order(s) working "
+                    f"for {active.display()}"
+                )
+                return False
+
+        # 2. Check remote open orders
         has_exit = self._has_matching_open_order(
             token_id, "SELL", price=t.exit_price, size=position.size
         )
@@ -234,16 +531,25 @@ class BotRuntime:
         if has_exit is None or exit_remaining is None:
             print(f"[runtime] exit paused — could not confirm open orders for {active.display()}")
             return True
-        baseline_remaining = self._exit_order_baselines.get(token_id, 0.0)
+
+        # Get baseline from DB (or 0 if not set)
+        baseline_remaining = 0.0
+        if self._db is not None:
+            pos_rec = self._db.get_position(token_id)
+            if pos_rec:
+                baseline_remaining = pos_rec.baseline_exit_remaining
         protected_size = max(0.0, exit_remaining - baseline_remaining)
         if protected_size + 0.05 >= position.size:
-            # 已有匹配卖单覆盖持仓 → 重置失败计数（状态恢复正常）
-            self._failed_exit_attempts[token_id] = 0
+            # 已有匹配卖单覆盖持仓 → 重置失败计数
+            if self._db is not None:
+                self._db_write_safe("reset_failed", lambda: self._db.reset_failed(token_id))
             print(f"[runtime] exit protected — sell order already exists for {active.display()}")
             return False
 
-        # 退避检查：连续失败达阈值时跳过下单，避免余额不足连续 400
-        failures = self._failed_exit_attempts.get(token_id, 0)
+        # 3. Backoff check (from DB)
+        failures = 0
+        if self._db is not None:
+            failures = self._db.get_failed_count(token_id)
         if failures >= self._exit_backoff_threshold:
             print(
                 f"[runtime] exit backed off — {failures} consecutive failures for "
@@ -251,30 +557,97 @@ class BotRuntime:
             )
             return True
 
-        missing_size = max(0.0, position.size - protected_size)
-        print(f"[runtime] exit protection — placing SELL for {missing_size} {active.display()} at {t.exit_price}")
-        resp = trading.exit_position(
-            self._client, token_id, "SELL", missing_size, t.exit_price
+        # 4. Symmetric: record SELL PENDING intent before API call
+        intent_id_sell = new_intent_id()
+        buy_intent_id = None
+        if self._db is not None:
+            buy_intent_id = self._db.get_last_buy_filled_intent(token_id)
+        sell_record = OrderRecord(
+            intent_id=intent_id_sell,
+            session_id=self._session_id,
+            token_id=token_id,
+            side="SELL",
+            price=t.exit_price,
+            size=position.size,
+            status=OrderStatus.PENDING.value,
+            label=active.label,
+            pair_intent_id=buy_intent_id,
         )
+        if not self._db_write_safe("insert SELL PENDING", lambda: self._db.insert_order(sell_record)):
+            return True
+        if buy_intent_id:
+            self._db_write_safe(
+                "update BUY pair_intent_id",
+                lambda: self._db.update_order_pair(buy_intent_id, intent_id_sell),
+            )
+
+        # 5. Call API
+        missing_size = max(0.0, position.size - protected_size)
+        print(
+            f"[runtime] exit protection — placing SELL for {missing_size} "
+            f"{active.display()} at {t.exit_price}"
+        )
+        try:
+            resp = trading.exit_position(
+                self._client, token_id, "SELL", missing_size, t.exit_price
+            )
+        except OrderTimeoutError as exc:
+            self._db_write_safe(
+                "SELL TIMEOUT_UNCONFIRMED",
+                lambda: self._db.update_order_status(
+                    intent_id_sell, OrderStatus.TIMEOUT_UNCONFIRMED.value, notes=str(exc)
+                ),
+            )
+            print(f"[runtime] SELL timeout — will reconcile next cycle: {exc}")
+            return True
+        except OrderRateLimitError as exc:
+            self._db_write_safe(
+                "SELL rate limited",
+                lambda: self._db.update_order_status(
+                    intent_id_sell, OrderStatus.PENDING.value, notes=f"rate limited: {exc}"
+                ),
+            )
+            print(f"[runtime] SELL rate limited — backing off 60s: {exc}")
+            time.sleep(60)
+            return True
+
         if resp is None:
-            # 下单失败（如余额不足 400）→ 累计失败次数
-            self._failed_exit_attempts[token_id] = failures + 1
+            # 4xx rejected (balance insufficient, etc.)
+            self._db_write_safe(
+                "SELL REJECTED",
+                lambda: self._db.update_order_status(
+                    intent_id_sell, OrderStatus.REJECTED.value, notes="API rejected"
+                ),
+            )
+            self._db_write_safe(
+                "incr_failed",
+                lambda: self._db.incr_failed(token_id, "SELL API rejected"),
+            )
             print(
-                f"[runtime] exit order failed — attempt {failures + 1}/"
+                f"[runtime] SELL rejected — attempt {failures + 1}/"
                 f"{self._exit_backoff_threshold} for {active.display()}"
             )
         else:
-            # 下单成功 → 重置失败计数
-            self._failed_exit_attempts[token_id] = 0
-            self._remember_order_id(resp, self._exit_order_ids)
+            order_id = str(resp.get("orderID") or resp.get("order_id") or "")
+            self._db_write_safe(
+                "SELL PLACED",
+                lambda: self._db.update_order_status(
+                    intent_id_sell, OrderStatus.PLACED.value, order_id=order_id
+                ),
+            )
+            self._db_write_safe("reset_failed", lambda: self._db.reset_failed(token_id))
+            print(f"[runtime] SELL placed for {active.display()} (order_id={order_id})")
         return True
 
     # ------------------------------------------------------------------ #
     # Fill detection + position tracking
     # ------------------------------------------------------------------ #
     def _detect_fills(self, t: TradingParams) -> bool:
-        # 用 asset_id 按 token 过滤，避免拉取全市场公开成交流水（实测
-        # maker_address 参数服务端过滤无效，仅 asset_id 有效）。
+        """Detect new fills via get_trades and update positions.
+
+        v3.0: removed the ``first_run`` trap — DB persistence makes it
+        unnecessary. seen_trade_ids is now queried from the DB.
+        """
         active = t.active_market()
         token_id = active.token_id if active else ""
         try:
@@ -290,19 +663,18 @@ class BotRuntime:
         if not trades:
             return True
 
-        first_run = not self._seen_trade_ids
         new_trades: list[dict[str, Any]] = []
         for tr in trades:
             tid = str(tr.get("id") or tr.get("trade_id") or tr.get("order_id") or "")
             if not tid:
                 continue
-            if tid in self._seen_trade_ids:
+            # Check DB for seen trade (replaces in-memory set)
+            if self._db is not None and self._db.is_trade_seen(tid):
                 continue
-            self._seen_trade_ids.add(tid)
-            if first_run:
-                self._apply_fill(tr, t)
-            else:
-                new_trades.append(tr)
+            # Mark as seen in DB
+            if self._db is not None:
+                self._db_write_safe("mark_trade_seen", lambda tid=tid: self._db.mark_trade_seen(tid))
+            new_trades.append(tr)
 
         if not new_trades:
             return True
@@ -314,6 +686,10 @@ class BotRuntime:
         return True
 
     def _apply_fill(self, trade: dict[str, Any], t: TradingParams) -> None:
+        """Apply a fill: update memory cache + DB (fill record + position).
+
+        v3.0: also inserts a FillRecord and updates the matching OrderRecord.
+        """
         token_id = str(
             trade.get("asset_id") or trade.get("token_id") or trade.get("market") or ""
         )
@@ -333,8 +709,9 @@ class BotRuntime:
             )
             return
 
+        # Update memory cache
         with self._lock:
-            pos = self._positions.setdefault(
+            pos = self._positions_cache.setdefault(
                 token_id, {"size": 0.0, "avg_price": 0.0, "label": label}
             )
             if not label:
@@ -350,6 +727,60 @@ class BotRuntime:
             elif side.startswith("S"):
                 pos["size"] = max(0.0, pos["size"] - size)
 
+        # Persist to DB: fill record + position update + order status
+        if self._db is None:
+            return
+
+        # Find matching order in DB by order_id
+        trade_order_ids = _extract_trade_order_ids(trade)
+        matching_order = None
+        if trade_order_ids:
+            matches = self._db.query_orders_by_order_ids(trade_order_ids)
+            if matches:
+                matching_order = matches[0]
+
+        # Insert fill record
+        if matching_order:
+            fill_rec = FillRecord(
+                trade_id=str(trade.get("id") or trade.get("trade_id") or ""),
+                token_id=token_id,
+                side=side,
+                size=size,
+                price=price,
+                order_id=matching_order.order_id,
+                intent_id=matching_order.intent_id,
+                raw_trade=json.dumps(trade, default=str) if trade else None,
+            )
+            self._db_write_safe("insert_fill", lambda: self._db.insert_fill(fill_rec))
+
+            # Update order filled_size + status
+            new_filled_total = matching_order.filled_size + size
+            is_full = new_filled_total >= matching_order.size - 0.05
+            self._db_write_safe(
+                "update_order_filled",
+                lambda: self._db.update_order_filled(
+                    matching_order.intent_id, size, new_filled_total, is_full
+                ),
+            )
+
+        # Update position in DB
+        with self._lock:
+            current = self._positions_cache.get(token_id, {})
+        current_size = current.get("size", 0.0)
+        current_avg = current.get("avg_price", 0.0)
+        pos_rec = PositionRecord(
+            token_id=token_id,
+            label=label or active.label,
+            size=current_size,
+            avg_price=current_avg,
+        )
+        self._db_write_safe("upsert_position", lambda: self._db.upsert_position(pos_rec))
+
+        # If SELL fully filled, fully reset position state (size/avg/baselines/entry_attempted/failed_attempts)
+        if side.startswith("S") and current_size <= 0.01:
+            self._db_write_safe("reset_position_state", lambda: self._db.reset_position_state(token_id))
+            print(f"[runtime] position state fully reset for {active.display()} (SELL filled — ready for re-entry)")
+
     def _reconcile_position_from_portfolio(self, t: TradingParams) -> None:
         """Use Polymarket portfolio positions as a fallback fill detector."""
         active = t.active_market()
@@ -364,9 +795,14 @@ class BotRuntime:
 
         managed_size = size
         managed_avg = avg_price
-        baseline = self._entry_position_baselines.get(active.token_id)
-        if baseline and active.token_id in self._entry_attempted_tokens:
-            baseline_size, baseline_avg = baseline
+        # 查 DB 的 baseline + entry_attempted（替代内存字典）
+        db_pos = self._db.get_position(active.token_id) if self._db is not None else None
+        baseline_size = db_pos.baseline_position_size if db_pos else 0.0
+        baseline_avg = db_pos.baseline_position_avg if db_pos else 0.0
+        entry_attempted = (
+            self._db.is_entry_attempted(active.token_id) if self._db is not None else False
+        )
+        if baseline_size > 0 and entry_attempted:
             if size <= baseline_size + 0.01:
                 return
             managed_size = size - baseline_size
@@ -378,15 +814,27 @@ class BotRuntime:
             return
 
         with self._lock:
-            current = self._positions.get(active.token_id, {})
+            current = self._positions_cache.get(active.token_id, {})
             current_size = current.get("size", 0.0) if current else 0.0
             if current_size >= managed_size:
                 return
-            self._positions[active.token_id] = {
+            self._positions_cache[active.token_id] = {
                 "size": managed_size,
                 "avg_price": managed_avg,
                 "label": active.display(),
             }
+        # 同步持仓到 DB
+        if self._db is not None:
+            pos_rec = PositionRecord(
+                token_id=active.token_id,
+                label=active.display(),
+                size=managed_size,
+                avg_price=managed_avg,
+            )
+            self._db_write_safe(
+                "upsert_position (portfolio recon)",
+                lambda: self._db.upsert_position(pos_rec),
+            )
         print(
             "[runtime] portfolio reconciliation detected managed position "
             f"for {active.display()} ({managed_size} @ {managed_avg})"
@@ -397,11 +845,19 @@ class BotRuntime:
         position = self._get_portfolio_position(token_id)
         if position is None:
             return False
-        self._entry_position_baselines[token_id] = position
+        baseline_size, baseline_avg = position
         exit_remaining = self._matching_open_order_remaining(token_id, "SELL", t.exit_price)
         if exit_remaining is None:
             return False
-        self._exit_order_baselines[token_id] = exit_remaining
+        if self._db is not None:
+            ok = self._db_write_safe(
+                "set_baselines",
+                lambda: self._db.set_baselines(
+                    token_id, baseline_size, baseline_avg, exit_remaining
+                ),
+            )
+            if not ok:
+                return False
         return True
 
     def _get_portfolio_position(self, token_id: str) -> tuple[float, float] | None:
@@ -439,7 +895,10 @@ class BotRuntime:
         avg_price: float,
         t: TradingParams,
     ) -> bool:
-        if token_id in self._entry_attempted_tokens:
+        entry_attempted = (
+            self._db.is_entry_attempted(token_id) if self._db is not None else False
+        )
+        if entry_attempted:
             return avg_price <= t.entry_price + 0.02 and size >= 0.01
         return (
             avg_price <= t.entry_price + 0.02
@@ -448,7 +907,7 @@ class BotRuntime:
 
     def _get_position(self, token_id: str) -> PositionData:
         with self._lock:
-            pos = self._positions.get(token_id)
+            pos = self._positions_cache.get(token_id)
             if not pos:
                 return PositionData(token_id=token_id)
             return PositionData(
@@ -529,10 +988,19 @@ class BotRuntime:
         # CLOB v2 Trade 对象无顶层 order_id，分散在 taker_order_id 和
         # maker_orders[].order_id 中。任一命中 bot 的 order bucket 即为 managed。
         trade_order_ids = _extract_trade_order_ids(trade)
-        if side.startswith("B") and trade_order_ids and self._entry_order_ids:
-            return bool(trade_order_ids & self._entry_order_ids)
-        if side.startswith("S") and trade_order_ids and self._exit_order_ids:
-            return bool(trade_order_ids & self._exit_order_ids)
+        # 从 DB 查询该 token 的 PLACED/PARTIAL 订单 order_id 集合（替代内存 set）
+        active_token = t.active_market().token_id if t.active_market() else ""
+        managed_order_ids: set[str] = set()
+        if self._db is not None and active_token:
+            side_filter = "BUY" if side.startswith("B") else "SELL"
+            unfinished = self._db.query_unfinished_orders(
+                token_id=active_token, side=side_filter
+            )
+            for o in unfinished:
+                if o.order_id:
+                    managed_order_ids.add(o.order_id)
+        if trade_order_ids and managed_order_ids:
+            return bool(trade_order_ids & managed_order_ids)
 
         if side.startswith("B"):
             target_notional = t.share_amount * t.entry_price
@@ -545,19 +1013,12 @@ class BotRuntime:
 
         if side.startswith("S"):
             with self._lock:
-                position = self._positions.get(t.active_market().token_id if t.active_market() else "")
+                position = self._positions_cache.get(active_token)
                 current_size = position.get("size", 0.0) if position else 0.0
             expected_price = t.exit_price
             return current_size > 0 and _close_enough(price, expected_price, min_abs=0.005, rel=0.02)
 
         return False
-
-    def _remember_order_id(self, response: Any, bucket: set[str]) -> None:
-        if not isinstance(response, dict):
-            return
-        order_id = str(response.get("orderID") or response.get("order_id") or "")
-        if order_id:
-            bucket.add(order_id)
 
     # ------------------------------------------------------------------ #
     # Open-orders change notification
@@ -588,7 +1049,7 @@ class BotRuntime:
                     "size": p.get("size", 0.0),
                     "avg_price": p.get("avg_price", 0.0),
                 }
-                for tid, p in self._positions.items()
+                for tid, p in self._positions_cache.items()
                 if p.get("size", 0.0) > 0
             ]
         t = self._guard.snapshot()

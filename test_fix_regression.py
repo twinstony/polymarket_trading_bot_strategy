@@ -16,6 +16,8 @@ from unittest.mock import MagicMock
 sys.path.insert(0, ".")
 
 from config import Market, TradingParams
+from order_state import OrderStatus
+from persistence import OrderRecord, Persistence
 from runtime import BotRuntime, _extract_trade_order_ids
 from py_clob_client_v2.clob_types import TradeParams
 
@@ -84,8 +86,33 @@ def make_runtime(trades=None, open_orders=None) -> BotRuntime:
     guard.snapshot.return_value = t
     guard.active_market.return_value = market
 
-    rt = BotRuntime(client, guard, notifier=None)
+    # v4: 持久化改造后，bot 挂单状态存储在 DB 的 orders 表中。
+    # 使用内存 SQLite 模拟"bot 已有挂单"的状态。
+    db = Persistence(":memory:")
+    db.open()
+    rt = BotRuntime(client, guard, notifier=None, persistence=db, session_id="test-session")
+    # orders.session_id 有外键引用 sessions.session_id，需先插入一条 session 记录
+    db.insert_session(rt._session_id, "TEST")
     return rt, client
+
+
+def _insert_bot_order(rt: BotRuntime, order_id: str, side: str) -> None:
+    """向 DB 插入一条 bot 挂单记录（替代直接设置 _entry_order_ids/_exit_order_ids）。"""
+    rt._db.insert_order(OrderRecord(
+        intent_id=f"intent-{order_id}",
+        session_id=rt._session_id,
+        token_id=TOKEN_ID,
+        side=side,
+        price=0.15 if side == "BUY" else 0.25,
+        size=5.0,
+        status=OrderStatus.PLACED.value,
+        order_id=order_id,
+    ))
+
+
+def _clear_orders(rt: BotRuntime) -> None:
+    """清空 DB 的 orders 表（替代 _entry_order_ids = set() / _exit_order_ids = set()）。"""
+    rt._db._execute("DELETE FROM orders")
 
 
 # --------------------------------------------------------------------------- #
@@ -121,8 +148,8 @@ def test_trade_matches_current_intent():
     print("=" * 60)
 
     rt, _ = make_runtime()
-    rt._entry_order_ids = {"0xBOT_BUY_001"}
-    rt._exit_order_ids = {"0xBOT_SELL_001"}
+    _insert_bot_order(rt, "0xBOT_BUY_001", "BUY")
+    _insert_bot_order(rt, "0xBOT_SELL_001", "SELL")
     t = rt._guard.snapshot()
 
     # BUY as maker → 应匹配 entry_order_ids
@@ -141,8 +168,7 @@ def test_trade_matches_current_intent():
     print("  [PASS] Other trade → NOT bot-managed")
 
     # bucket 为空 → 不匹配（避免重启后误判）
-    rt._entry_order_ids = set()
-    rt._exit_order_ids = set()
+    _clear_orders(rt)
     matched = rt._trade_matches_current_intent(TRADE_BUY_AS_MAKER, t, "BUY", 5.0, 0.15)
     # bucket 为空时走 fallback 逻辑（price/size 匹配），size=5.0 匹配 share_amount=5.0
     # 这个 fallback 是有意的，用于重启后 bucket 丢失的场景
@@ -158,28 +184,28 @@ def test_apply_fill_e2e():
     print("=" * 60)
 
     rt, _ = make_runtime()
-    rt._entry_order_ids = {"0xBOT_BUY_001"}
-    rt._exit_order_ids = {"0xBOT_SELL_001"}
+    _insert_bot_order(rt, "0xBOT_BUY_001", "BUY")
+    _insert_bot_order(rt, "0xBOT_SELL_001", "SELL")
     t = rt._guard.snapshot()
 
     # BUY as maker → 持仓 +5
-    rt._positions = {}
+    rt._positions_cache = {}
     rt._apply_fill(TRADE_BUY_AS_MAKER, t)
-    pos = rt._positions.get(TOKEN_ID, {})
+    pos = rt._positions_cache.get(TOKEN_ID, {})
     assert pos.get("size") == 5.0, f"BUY 后持仓应为 5.0, 实际 {pos.get('size')}"
     assert pos.get("avg_price") == 0.15, f"avg_price 应为 0.15, 实际 {pos.get('avg_price')}"
     print(f"  [PASS] BUY as maker → 持仓 {pos['size']} @ {pos['avg_price']}")
 
     # SELL as maker → 持仓归零
     rt._apply_fill(TRADE_SELL_AS_MAKER, t)
-    pos = rt._positions.get(TOKEN_ID, {})
+    pos = rt._positions_cache.get(TOKEN_ID, {})
     assert pos.get("size") == 0.0, f"SELL 后持仓应为 0.0, 实际 {pos.get('size')}"
     print(f"  [PASS] SELL as maker → 持仓归零 {pos['size']}")
 
     # 别人的成交 → 持仓不变
-    size_before = rt._positions.get(TOKEN_ID, {}).get("size", 0.0)
+    size_before = rt._positions_cache.get(TOKEN_ID, {}).get("size", 0.0)
     rt._apply_fill(TRADE_OTHER, t)
-    size_after = rt._positions.get(TOKEN_ID, {}).get("size", 0.0)
+    size_after = rt._positions_cache.get(TOKEN_ID, {}).get("size", 0.0)
     assert size_after == size_before, f"别人成交不应改变持仓: {size_before} → {size_after}"
     print(f"  [PASS] Other trade → 持仓不变 ({size_before} → {size_after})")
 
@@ -235,16 +261,16 @@ def test_exit_backoff_e2e():
     trading_mod.exit_position = mock_exit
     try:
         # 第 1 次失败：count=1，未达阈值，应实际下单
-        rt._failed_exit_attempts = {}
+        # （DB 的 failed_attempts 表初始为空，等价于旧的 _failed_exit_attempts = {}）
         rt._ensure_exit_order(t, active, TOKEN_ID, position)
         assert call_count["n"] == 1, f"第 1 次应实际下单, call_count={call_count['n']}"
-        assert rt._failed_exit_attempts.get(TOKEN_ID) == 1, f"失败计数应为 1, 实际 {rt._failed_exit_attempts.get(TOKEN_ID)}"
+        assert rt._db.get_failed_count(TOKEN_ID) == 1, f"失败计数应为 1, 实际 {rt._db.get_failed_count(TOKEN_ID)}"
         print(f"  [PASS] 第 1 次失败 → 实际下单, 失败计数=1")
 
         # 第 2 次失败：count=2，达阈值，应实际下单（阈值检查在下单前）
         rt._ensure_exit_order(t, active, TOKEN_ID, position)
         assert call_count["n"] == 2, f"第 2 次应实际下单, call_count={call_count['n']}"
-        assert rt._failed_exit_attempts.get(TOKEN_ID) == 2, f"失败计数应为 2, 实际 {rt._failed_exit_attempts.get(TOKEN_ID)}"
+        assert rt._db.get_failed_count(TOKEN_ID) == 2, f"失败计数应为 2, 实际 {rt._db.get_failed_count(TOKEN_ID)}"
         print(f"  [PASS] 第 2 次失败 → 实际下单, 失败计数=2")
 
         # 第 3 次：达阈值，应跳过下单（退避）
@@ -258,14 +284,17 @@ def test_exit_backoff_e2e():
         print(f"  [PASS] 第 4 次 → 继续退避 (call_count 仍为 {call_count['n']})")
 
         # 场景：有 SELL 挂单覆盖持仓 → 重置失败计数
-        rt._failed_exit_attempts[TOKEN_ID] = 5
+        # 模拟之前累计 5 次失败（等价于旧的 _failed_exit_attempts[TOKEN_ID] = 5）
+        rt._db.reset_failed(TOKEN_ID)
+        for _ in range(5):
+            rt._db.incr_failed(TOKEN_ID, "setup to 5")
         # mock open_orders 返回匹配的 SELL
         client.get_open_orders.return_value = [{
             "asset_id": TOKEN_ID, "side": "SELL", "price": "0.25",
             "original_size": "5.0", "size_matched": "0.0",
         }]
         rt._ensure_exit_order(t, active, TOKEN_ID, position)
-        assert rt._failed_exit_attempts.get(TOKEN_ID) == 0, f"有卖单覆盖时应重置计数, 实际 {rt._failed_exit_attempts.get(TOKEN_ID)}"
+        assert rt._db.get_failed_count(TOKEN_ID) == 0, f"有卖单覆盖时应重置计数, 实际 {rt._db.get_failed_count(TOKEN_ID)}"
         print(f"  [PASS] 有 SELL 挂单覆盖 → 重置失败计数=0")
 
     finally:
@@ -294,10 +323,15 @@ def test_exit_success_resets():
 
     trading_mod.exit_position = mock_exit_success
     try:
-        rt._failed_exit_attempts = {TOKEN_ID: 1}  # 之前失败过 1 次
+        # 模拟之前失败过 1 次（等价于旧的 _failed_exit_attempts = {TOKEN_ID: 1}）
+        rt._db.incr_failed(TOKEN_ID, "setup: prior failure")
         rt._ensure_exit_order(t, active, TOKEN_ID, position)
-        assert rt._failed_exit_attempts.get(TOKEN_ID) == 0, f"成功后应重置, 实际 {rt._failed_exit_attempts.get(TOKEN_ID)}"
-        assert "0xNEW_SELL" in rt._exit_order_ids, "成功响应的 order_id 应记入 _exit_order_ids"
+        assert rt._db.get_failed_count(TOKEN_ID) == 0, f"成功后应重置, 实际 {rt._db.get_failed_count(TOKEN_ID)}"
+        # v4: 成功响应的 order_id 现记入 DB 的 orders 表（status=PLACED），替代旧的 _exit_order_ids
+        sell_order_ids = {
+            o.order_id for o in rt._db.query_unfinished_orders(token_id=TOKEN_ID, side="SELL") if o.order_id
+        }
+        assert "0xNEW_SELL" in sell_order_ids, "成功响应的 order_id 应记入 DB 的 SELL 未完成订单"
         print(f"  [PASS] SELL 下单成功 → 失败计数重置=0, order_id 记入 bucket")
     finally:
         trading_mod.exit_position = original_exit
