@@ -313,26 +313,65 @@ class BotRuntime:
                 self._notifier.notify_fill(tr, t.markets)
         return True
 
-    def _apply_fill(self, trade: dict[str, Any], t: TradingParams) -> None:
-        token_id = str(
-            trade.get("asset_id") or trade.get("token_id") or trade.get("market") or ""
-        )
-        if not token_id:
-            return
-        side = str(trade.get("side", "")).upper()
-        size = _to_float(trade.get("size") or trade.get("matched_amount")) or 0.0
-        price = _to_float(trade.get("price")) or 0.0
-        label = next((m.label for m in t.markets if m.token_id == token_id), "")
-        active = t.active_market()
-        if active is None or token_id != active.token_id:
-            return
-        if not self._trade_matches_current_intent(trade, t, side, size, price):
-            print(
-                "[runtime] ignored fill that does not match current bot intent "
-                f"({active.display()} side={side} size={size} price={price})"
-            )
-            return
+    def _extract_bot_fills(
+        self, trade: dict[str, Any]
+    ) -> list[tuple[str, float, float]]:
+        """从一笔 trade 中提取 Bot 自己的成交记录。
 
+        返回 ``[(direction, size, price), ...]``，其中：
+
+        - ``direction`` 为 Bot 的实际方向（``"BUY"`` 或 ``"SELL"``），而非
+          CLOB Trade 对象顶层的 ``side``（那是 taker 视角）。
+        - ``size`` 为 Bot 实际成交股数。Bot 作为 maker 时取自
+          ``maker_orders[].size``（Bot 自己那部分），而非 trade 顶层 size
+          （那是 taker 总成交量，可能包含其他 maker 的成交）。
+        - ``price`` 为成交价。
+
+        方向判定依据命中的 order_id bucket：
+        - 命中 ``_entry_order_ids`` → Bot 的 BUY 限价单被吃 → ``"BUY"``
+        - 命中 ``_exit_order_ids`` → Bot 的 SELL 限价单被吃 → ``"SELL"``
+
+        Bot 作为 taker 时方向由 ``trade.side`` 决定，size 取自 trade 顶层。
+
+        若无 order_id 命中（buckets 为空或 trade 不含 Bot 订单），返回空列表，
+        由调用方走启发式 fallback。
+        """
+        fills: list[tuple[str, float, float]] = []
+        trade_price = _to_float(trade.get("price")) or 0.0
+
+        # 1. Bot 作为 taker（trade.side 即 Bot 方向，size 为 taker 总成交量）
+        taker_id = str(trade.get("taker_order_id") or "")
+        if taker_id:
+            taker_size = _to_float(
+                trade.get("size") or trade.get("matched_amount")
+            ) or 0.0
+            if taker_id in self._entry_order_ids:
+                fills.append(("BUY", taker_size, trade_price))
+            elif taker_id in self._exit_order_ids:
+                fills.append(("SELL", taker_size, trade_price))
+
+        # 2. Bot 作为 maker（方向由命中的 bucket 决定，size 取自 maker_orders）
+        maker_orders = trade.get("maker_orders") or []
+        if isinstance(maker_orders, list):
+            for mo in maker_orders:
+                if not isinstance(mo, dict):
+                    continue
+                mid = str(mo.get("order_id") or mo.get("orderID") or "")
+                if not mid:
+                    continue
+                mo_size = _to_float(mo.get("size") or mo.get("matched_size")) or 0.0
+                mo_price = _to_float(mo.get("price")) or trade_price
+                if mid in self._entry_order_ids:
+                    fills.append(("BUY", mo_size, mo_price))
+                elif mid in self._exit_order_ids:
+                    fills.append(("SELL", mo_size, mo_price))
+
+        return fills
+
+    def _update_position(
+        self, token_id: str, label: str, side: str, size: float, price: float
+    ) -> None:
+        """根据一笔 Bot 成交更新本地持仓。side 为 Bot 实际方向（BUY/SELL）。"""
         with self._lock:
             pos = self._positions.setdefault(
                 token_id, {"size": 0.0, "avg_price": 0.0, "label": label}
@@ -344,14 +383,75 @@ class BotRuntime:
                 old_avg = pos["avg_price"]
                 new_size = old_size + size
                 pos["avg_price"] = (
-                    (old_avg * old_size + price * size) / new_size if new_size > 0 else price
+                    (old_avg * old_size + price * size) / new_size
+                    if new_size > 0
+                    else price
                 )
                 pos["size"] = new_size
             elif side.startswith("S"):
                 pos["size"] = max(0.0, pos["size"] - size)
 
+    def _apply_fill(self, trade: dict[str, Any], t: TradingParams) -> None:
+        token_id = str(
+            trade.get("asset_id") or trade.get("token_id") or trade.get("market") or ""
+        )
+        if not token_id:
+            return
+        side = str(trade.get("side", "")).upper()
+        trade_size = _to_float(trade.get("size") or trade.get("matched_amount")) or 0.0
+        price = _to_float(trade.get("price")) or 0.0
+        label = next((m.label for m in t.markets if m.token_id == token_id), "")
+        active = t.active_market()
+        if active is None or token_id != active.token_id:
+            return
+
+        # 优先：基于 order_id 的精确匹配。
+        # 解决两个核心问题：
+        # 1. trade.side 是 taker 视角，Bot 作为 maker 的 SELL 被吃时 side="BUY"，
+        #    但 Bot 实际方向是 SELL，应减少持仓。
+        # 2. trade.size 是 taker 总成交量（可能包含多个 maker），Bot 作为 maker
+        #    只成交了 maker_orders[].size 那部分。
+        bot_fills = self._extract_bot_fills(trade)
+        if bot_fills:
+            for fill_side, fill_size, fill_price in bot_fills:
+                self._update_position(token_id, label, fill_side, fill_size, fill_price)
+                print(
+                    "[runtime] applied bot fill "
+                    f"({active.display()} side={fill_side} "
+                    f"size={fill_size} price={fill_price})"
+                )
+            return
+
+        # Fallback：无 order_id 命中。
+        # 若 trade 含 order_id 且 buckets 非空但未命中 → 别人的成交，直接忽略，
+        # 不走启发式（避免误判）。
+        trade_order_ids = _extract_trade_order_ids(trade)
+        has_buckets = bool(self._entry_order_ids or self._exit_order_ids)
+        if trade_order_ids and has_buckets:
+            print(
+                "[runtime] ignored fill that does not match current bot intent "
+                f"({active.display()} side={side} size={trade_size} price={price})"
+            )
+            return
+
+        # 无 order_id 信息或 buckets 为空 → 走启发式匹配（重启后无状态场景）
+        if not self._trade_matches_current_intent(trade, t, side, trade_size, price):
+            print(
+                "[runtime] ignored fill that does not match current bot intent "
+                f"({active.display()} side={side} size={trade_size} price={price})"
+            )
+            return
+
+        self._update_position(token_id, label, side, trade_size, price)
+
     def _reconcile_position_from_portfolio(self, t: TradingParams) -> None:
-        """Use Polymarket portfolio positions as a fallback fill detector."""
+        """Use Polymarket portfolio positions as a fallback fill detector.
+
+        双向修正：
+        - 向上修正：portfolio 持仓 > 本地持仓 → BUY 成交未被本地捕获
+        - 向下修正：portfolio 持仓 < 本地持仓 → SELL 成交未被本地捕获
+          （如 maker SELL 被吃但 trade.side=BUY 导致 _apply_fill 漏检）
+        """
         active = t.active_market()
         if active is None or not active.token_id:
             return
@@ -359,9 +459,33 @@ class BotRuntime:
         if portfolio_position is None:
             return
         size, avg_price = portfolio_position
+
+        with self._lock:
+            current = self._positions.get(active.token_id, {})
+            current_size = current.get("size", 0.0) if current else 0.0
+
+        # 向下修正：portfolio 显示持仓 < 本地持仓 → SELL 成交未被本地捕获
+        # （含 portfolio 显示 0 股的完全平仓场景）
+        if size < current_size - 0.05:
+            with self._lock:
+                if size <= 0:
+                    self._positions.pop(active.token_id, None)
+                else:
+                    self._positions[active.token_id] = {
+                        "size": size,
+                        "avg_price": avg_price,
+                        "label": active.display(),
+                    }
+            print(
+                "[runtime] portfolio reconciliation corrected position downward "
+                f"for {active.display()} (local={current_size} -> portfolio={size})"
+            )
+            return
+
         if size <= 0:
             return
 
+        # 向上修正（原有逻辑）：检测 BUY 成交
         managed_size = size
         managed_avg = avg_price
         baseline = self._entry_position_baselines.get(active.token_id)
@@ -394,13 +518,28 @@ class BotRuntime:
         return
 
     def _remember_layer_baseline(self, t: TradingParams, token_id: str) -> bool:
+        """记录入场前的 baseline（portfolio 持仓 + SELL 挂单）。
+
+        baseline 用于 portfolio 对账 fallback 时区分"用户已有仓位"和
+        "bot 新仓位"。baseline 记录失败不应阻塞入场——order_id 匹配是
+        主要的成交识别机制，baseline 只是提升对账精度。失败时降级为警告。
+        """
         position = self._get_portfolio_position(token_id)
         if position is None:
-            return False
+            print(
+                f"[runtime] baseline not recorded for {token_id[:12]}... — "
+                "portfolio API unavailable, proceeding without baseline "
+                "(reconciliation fallback may be less precise)"
+            )
+            return True
         self._entry_position_baselines[token_id] = position
         exit_remaining = self._matching_open_order_remaining(token_id, "SELL", t.exit_price)
         if exit_remaining is None:
-            return False
+            print(
+                f"[runtime] exit baseline not recorded for {token_id[:12]}... — "
+                "open-orders check failed, proceeding without exit baseline"
+            )
+            return True
         self._exit_order_baselines[token_id] = exit_remaining
         return True
 
@@ -408,16 +547,25 @@ class BotRuntime:
         funder = self._guard.config.funder
         if not funder:
             return (0.0, 0.0)
-        try:
-            response = httpx.get(
-                "https://data-api.polymarket.com/positions",
-                params={"user": funder, "limit": 200, "sizeThreshold": 0},
-                timeout=15,
-            )
-            response.raise_for_status()
-            data = response.json()
-        except Exception as exc:  # noqa: BLE001
-            print(f"[runtime] portfolio position check failed: {exc}")
+        # 重试以应对暂时性网络错误（SSL UNEXPECTED_EOF / 连接重置等）
+        last_exc: Exception | None = None
+        data: Any = None
+        for attempt in range(3):
+            try:
+                response = httpx.get(
+                    "https://data-api.polymarket.com/positions",
+                    params={"user": funder, "limit": 200, "sizeThreshold": 0},
+                    timeout=15,
+                )
+                response.raise_for_status()
+                data = response.json()
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if attempt < 2:
+                    time.sleep((attempt + 1) * 2)
+        if data is None:
+            print(f"[runtime] portfolio position check failed after 3 retries: {last_exc}")
             return None
 
         items = data if isinstance(data, list) else []
@@ -525,15 +673,13 @@ class BotRuntime:
         size: float,
         price: float,
     ) -> bool:
-        # 收集 trade 涉及的所有 order_id（taker + 所有 maker）。
-        # CLOB v2 Trade 对象无顶层 order_id，分散在 taker_order_id 和
-        # maker_orders[].order_id 中。任一命中 bot 的 order bucket 即为 managed。
-        trade_order_ids = _extract_trade_order_ids(trade)
-        if side.startswith("B") and trade_order_ids and self._entry_order_ids:
-            return bool(trade_order_ids & self._entry_order_ids)
-        if side.startswith("S") and trade_order_ids and self._exit_order_ids:
-            return bool(trade_order_ids & self._exit_order_ids)
+        """启发式 fallback 匹配（无 order_id 或 buckets 为空时使用）。
 
+        注意：order_id 精确匹配已在 ``_apply_fill`` 中通过 ``_extract_bot_fills``
+        完成。此方法仅作为 fallback，基于价格/数量/持仓状态做启发式判断，
+        不再依赖 trade.side 做 order_id 分流（那是 taker 视角，Bot 作为 maker
+        时方向相反，会导致 SELL 成交被误判为"不匹配"而忽略）。
+        """
         if side.startswith("B"):
             target_notional = t.share_amount * t.entry_price
             trade_notional = size * price
