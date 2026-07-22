@@ -518,13 +518,28 @@ class BotRuntime:
         return
 
     def _remember_layer_baseline(self, t: TradingParams, token_id: str) -> bool:
+        """记录入场前的 baseline（portfolio 持仓 + SELL 挂单）。
+
+        baseline 用于 portfolio 对账 fallback 时区分"用户已有仓位"和
+        "bot 新仓位"。baseline 记录失败不应阻塞入场——order_id 匹配是
+        主要的成交识别机制，baseline 只是提升对账精度。失败时降级为警告。
+        """
         position = self._get_portfolio_position(token_id)
         if position is None:
-            return False
+            print(
+                f"[runtime] baseline not recorded for {token_id[:12]}... — "
+                "portfolio API unavailable, proceeding without baseline "
+                "(reconciliation fallback may be less precise)"
+            )
+            return True
         self._entry_position_baselines[token_id] = position
         exit_remaining = self._matching_open_order_remaining(token_id, "SELL", t.exit_price)
         if exit_remaining is None:
-            return False
+            print(
+                f"[runtime] exit baseline not recorded for {token_id[:12]}... — "
+                "open-orders check failed, proceeding without exit baseline"
+            )
+            return True
         self._exit_order_baselines[token_id] = exit_remaining
         return True
 
@@ -532,16 +547,25 @@ class BotRuntime:
         funder = self._guard.config.funder
         if not funder:
             return (0.0, 0.0)
-        try:
-            response = httpx.get(
-                "https://data-api.polymarket.com/positions",
-                params={"user": funder, "limit": 200, "sizeThreshold": 0},
-                timeout=15,
-            )
-            response.raise_for_status()
-            data = response.json()
-        except Exception as exc:  # noqa: BLE001
-            print(f"[runtime] portfolio position check failed: {exc}")
+        # 重试以应对暂时性网络错误（SSL UNEXPECTED_EOF / 连接重置等）
+        last_exc: Exception | None = None
+        data: Any = None
+        for attempt in range(3):
+            try:
+                response = httpx.get(
+                    "https://data-api.polymarket.com/positions",
+                    params={"user": funder, "limit": 200, "sizeThreshold": 0},
+                    timeout=15,
+                )
+                response.raise_for_status()
+                data = response.json()
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if attempt < 2:
+                    time.sleep((attempt + 1) * 2)
+        if data is None:
+            print(f"[runtime] portfolio position check failed after 3 retries: {last_exc}")
             return None
 
         items = data if isinstance(data, list) else []
