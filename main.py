@@ -1,15 +1,14 @@
 """
-Polymarket CLOB Trading Bot - entry point.
+Polymarket CLOB Trading Bot - entry point (asyncio multi-strategy).
 
-Wires together: config -> CLOB client -> notifier manager -> runtime loop ->
-interactive Telegram command bot. Runs until interrupted (Ctrl-C / SIGTERM).
-
-Mirrors the original ``node index.js`` entry point but with a real polling
-loop instead of a single mock cycle.
+Wires together: config -> CLOB client -> notifier manager -> RuntimeManager
+(multiple StrategyRuntime tasks) -> interactive Telegram command bot.
+Runs an asyncio event loop until interrupted (Ctrl-C / SIGTERM).
 """
 
 from __future__ import annotations
 
+import asyncio
 import signal
 import sys
 
@@ -18,24 +17,21 @@ from bot import TelegramCommandBot
 from config import Config, ConfigGuard
 from market_setup import run_interactive_setup
 from notifications import NotifierManager
-from runtime import BotRuntime
+from runtime_manager import RuntimeManager
 
 
-def main() -> int:
-    print("Starting Polymarket Trading Bot (Python)...")
+async def async_main() -> int:
+    print("Starting Polymarket Trading Bot (Python asyncio multi-strategy)...")
 
     config = Config.load()
 
     if not config.private_key:
-        # The original JS bot exits here; we do the same for trading mode.
-        # (Notifications / interactive bot could still run read-only, but a
-        # trading bot without a key is not useful.)
         print("Error: PRIVATE_KEY not found in .env")
         return 1
 
-    if not config.trading.markets:
-        print("Warning: no market configured. Set TOKEN_ID / MARKETS in .env or")
-        print("         use the /market add <token_id> command once the bot is running.")
+    if not config.trading.strategies:
+        print("Warning: no strategy configured. Use the interactive setup below")
+        print("         or the /strategy add command once the bot is running.")
 
     # CLOB client -----------------------------------------------------------
     try:
@@ -57,8 +53,8 @@ def main() -> int:
         print("[main] 未完成市场配置，退出")
         return 1
 
-    # Runtime loop ----------------------------------------------------------
-    runtime = BotRuntime(client, guard, notifier)
+    # RuntimeManager (manages multiple StrategyRuntime asyncio tasks) --------
+    manager = RuntimeManager(client, guard, notifier)
 
     # Interactive Telegram command bot -------------------------------------
     command_bot: TelegramCommandBot | None = None
@@ -66,43 +62,55 @@ def main() -> int:
         command_bot = TelegramCommandBot(
             token=config.telegram_interactive_token,
             config_guard=guard,
-            status_provider=runtime.status_snapshot,
+            runtime_manager=manager,
             allowed_user_ids=config.telegram_allowed_user_ids,
         )
-        command_bot.notifier = notifier  # enables config-change push notifications
-        command_bot.start()
+        await command_bot.start()
         print("[main] interactive Telegram bot started")
     else:
         print("[main] interactive Telegram bot disabled (no TELEGRAM_INTERACTIVE_TOKEN)")
 
-    # Start the runtime loop in a background thread ------------------------
-    runtime.start()
-    print(f"[main] runtime loop started (poll interval {config.poll_interval}s)")
+    # Start all strategy runtimes ------------------------------------------
+    await manager.start_all()
+    print(f"[main] runtime started (poll interval {config.poll_interval}s)")
 
-    # Graceful shutdown ----------------------------------------------------
-    stop = False
+    # Graceful shutdown via asyncio Event ----------------------------------
+    stop_event = asyncio.Event()
 
     def _handle_signal(signum, _frame):
-        nonlocal stop
         print(f"\n[main] received signal {signum}; shutting down...")
-        stop = True
-        runtime.stop()
-        if command_bot:
-            command_bot.stop()
+        stop_event.set()
 
-    signal.signal(signal.SIGINT, _handle_signal)
-    if hasattr(signal, "SIGTERM"):
-        signal.signal(signal.SIGTERM, _handle_signal)
+    loop = asyncio.get_event_loop()
+    for sig_name in ("SIGINT", "SIGTERM"):
+        sig = getattr(signal, sig_name, None)
+        if sig is None:
+            continue
+        try:
+            loop.add_signal_handler(sig, _handle_signal, sig, None)
+        except (NotImplementedError, RuntimeError):
+            # Windows doesn't support add_signal_handler; fallback to signal.signal
+            signal.signal(sig, _handle_signal)
 
     print("[main] bot is running. Press Ctrl-C to stop.")
-    import time
 
-    while not stop:
-        # Short sleeps so signal handlers can flip `stop` promptly on any OS.
-        time.sleep(0.5)
+    # Wait for stop signal
+    await stop_event.wait()
 
+    # Shutdown: stop telegram, stop all runtimes ----------------------------
+    if command_bot:
+        await command_bot.stop()
+    await manager.stop_all()
     print("[main] stopped.")
     return 0
+
+
+def main() -> int:
+    try:
+        return asyncio.run(async_main())
+    except KeyboardInterrupt:
+        print("\n[main] interrupted.")
+        return 0
 
 
 if __name__ == "__main__":

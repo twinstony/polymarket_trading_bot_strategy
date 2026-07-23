@@ -29,6 +29,7 @@ from py_clob_client_v2 import (
     ApiCreds,
     ClobClient,
     OrderArgs,
+    OrderPayload,
     OrderType,
     PartialCreateOrderOptions,
     Side,
@@ -37,7 +38,19 @@ from py_clob_client_v2.http_helpers import helpers as clob_http_helpers
 
 from strategy import MarketData
 
-clob_http_helpers._http_client = httpx.Client(http2=False, timeout=30)
+# Configure httpx client with retry-friendly transport to mitigate
+# transient SSL EOF errors (common when routing through proxies/VPNs).
+# keepalive + connection limits reduce stale-connection reuse failures.
+clob_http_helpers._http_client = httpx.Client(
+    http2=False,
+    timeout=httpx.Timeout(30.0, connect=10.0),
+    limits=httpx.Limits(
+        max_keepalive_connections=5,
+        max_connections=10,
+        keepalive_expiry=5.0,
+    ),
+    transport=httpx.HTTPTransport(retries=2),
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -271,3 +284,94 @@ def _order_to_dict(obj: Any) -> dict[str, Any]:
     if hasattr(obj, "__dict__"):
         return {k: v for k, v in vars(obj).items() if not k.startswith("_")}
     return {"value": str(obj)}
+
+
+def cancel_orders_for_token(
+    client: ClobClient, token_id: str, side: str | None = None
+) -> int:
+    """取消该 token 的所有挂单（可按 side 过滤）。返回成功取消的订单数。"""
+    try:
+        orders = client.get_open_orders()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[trading] cancel: get_open_orders failed: {exc}")
+        return 0
+    if not isinstance(orders, list):
+        return 0
+    cancelled = 0
+    for o in orders:
+        o_dict = _order_to_dict(o)
+        o_token = str(o_dict.get("asset_id") or o_dict.get("token_id") or "")
+        if o_token != token_id:
+            continue
+        if side and str(o_dict.get("side", "")).upper() != side.upper():
+            continue
+        oid = str(
+            o_dict.get("id") or o_dict.get("order_id") or o_dict.get("orderID") or ""
+        )
+        if not oid:
+            continue
+        try:
+            client.cancel_order(OrderPayload(orderID=oid))
+            cancelled += 1
+        except Exception as exc:  # noqa: BLE001
+            print(f"[trading] cancel order {oid} failed: {exc}")
+    return cancelled
+
+
+# --------------------------------------------------------------------------- #
+# Async wrappers (for asyncio-based StrategyRuntime)
+# --------------------------------------------------------------------------- #
+import asyncio  # noqa: E402
+
+
+async def get_market_data_async(client: ClobClient, token_id: str) -> MarketData:
+    """Async wrapper for get_market_data — runs sync SDK in a thread."""
+    return await asyncio.to_thread(get_market_data, client, token_id)
+
+
+async def get_open_orders_async(client: ClobClient) -> list[dict[str, Any]]:
+    """Async wrapper for get_open_orders."""
+    return await asyncio.to_thread(get_open_orders, client)
+
+
+async def get_trades_async(client: ClobClient, token_id: str) -> list[dict[str, Any]]:
+    """Async wrapper: fetch trades for a specific token via get_trades(asset_id).
+
+    py_clob_client_v2's get_trades accepts a TradeParams with asset_id filter.
+    We import TradeParams here to avoid polluting the module-level namespace
+    for callers that only use the sync API.
+    """
+    def _fetch():
+        try:
+            from py_clob_client_v2 import TradeParams
+            params = TradeParams(asset_id=token_id)
+            trades = client.get_trades(params=params)
+        except Exception:
+            # Fallback: fetch all and filter (less efficient but resilient)
+            trades = client.get_trades()
+        if not isinstance(trades, list):
+            return []
+        return [_order_to_dict(t) for t in trades]
+
+    return await asyncio.to_thread(_fetch)
+
+
+async def enter_position_async(
+    client: ClobClient, token_id: str, side, amount: float, price: float
+) -> dict[str, Any] | None:
+    """Async wrapper for enter_position."""
+    return await asyncio.to_thread(enter_position, client, token_id, side, amount, price)
+
+
+async def exit_position_async(
+    client: ClobClient, token_id: str, side, amount: float, price: float
+) -> dict[str, Any] | None:
+    """Async wrapper for exit_position."""
+    return await asyncio.to_thread(exit_position, client, token_id, side, amount, price)
+
+
+async def cancel_orders_for_token_async(
+    client: ClobClient, token_id: str, side: str | None = None
+) -> int:
+    """Async wrapper for cancel_orders_for_token."""
+    return await asyncio.to_thread(cancel_orders_for_token, client, token_id, side)

@@ -55,7 +55,6 @@ def should_enter(market_data: MarketData, entry_price: float) -> bool:
     can realistically be filled at ``entry_price``. Replace this body with
     custom logic (volume / spread / probability based) if needed.
     """
-    print("[strategy] Checking entry logic...")
     if not market_data.has_book or entry_price is None:
         return False
     ask = market_data.best_ask
@@ -78,7 +77,6 @@ def should_exit(
     take-profit / stop-loss percentages (expressed as fractions, e.g. 0.10 =
     10%). A rule is only evaluated when its threshold is configured.
     """
-    print("[strategy] Checking exit logic...")
     if not position.has_position:
         return False
 

@@ -68,14 +68,35 @@ def _parse_json_list(name: str) -> list[dict[str, Any]]:
 
 
 @dataclass
-class Market:
-    """A monitored outcome token (e.g. the YES token of a market)."""
+class Strategy:
+    """A single trading strategy bound to one outcome token.
+
+    Each strategy is an independent unit: it has its own token_id, prices,
+    order size, and runtime state. Multiple strategies run concurrently as
+    separate StrategyRuntime instances. A "dual-sided bet" is simply two
+    Strategy entries (one per outcome token).
+    """
 
     token_id: str
     label: str = ""
+    outcome_name: str = ""  # "Yes" / "No" / team name
+    entry_price: float = 0.50
+    exit_price: float = 0.55
+    share_amount: float = 10.0
+    enabled: bool = True
+    strategy_id: str = ""  # unique id; auto-generated from token_id if empty
+    # 每策略独立的止盈止损（None=关闭）。全局 TradingParams 的同名字段仅作为
+    # 交互式 setup 时的默认值 fallback。
+    take_profit_pct: float | None = None
+    stop_loss_pct: float | None = None
 
     def display(self) -> str:
         return self.label or self.token_id
+
+    def __post_init__(self):
+        if not self.strategy_id:
+            # Use first 12 chars of token_id as a readable unique id
+            self.strategy_id = self.token_id[:12] if self.token_id else ""
 
 
 @dataclass
@@ -97,8 +118,12 @@ class Webhook:
 class TradingParams:
     """Mutable trading parameters persisted to config.json."""
 
-    markets: list[Market] = field(default_factory=list)
-    active_market_index: int = 0
+    # Unified strategy list: each entry is an independent trading unit.
+    # Replaces the old markets/dual_markets split. A single-sided bet is one
+    # Strategy; a dual-sided bet is two Strategy entries.
+    strategies: list[Strategy] = field(default_factory=list)
+    # Global defaults (used as fallback when a Strategy field is not set, and
+    # for take_profit/stop_loss which are still global).
     share_amount: float = 10.0
     entry_price: float = 0.50
     exit_price: float = 0.55
@@ -106,13 +131,14 @@ class TradingParams:
     stop_loss_pct: float | None = None
     conditional_entry: bool = True  # True=best_ask≤entry_price才下单; False=立即挂限价单
 
-    def active_market(self) -> Market | None:
-        if not self.markets:
-            return None
-        idx = self.active_market_index
-        if idx < 0 or idx >= len(self.markets):
-            return self.markets[0]
-        return self.markets[idx]
+    def get_strategy(self, strategy_id: str) -> Strategy | None:
+        for s in self.strategies:
+            if s.strategy_id == strategy_id:
+                return s
+        return None
+
+    def list_enabled(self) -> list[Strategy]:
+        return [s for s in self.strategies if s.enabled and s.token_id]
 
 
 @dataclass
@@ -193,24 +219,32 @@ class Config:
             stop_loss_pct=_env_float("STOP_LOSS_PCT", None),
             conditional_entry=_env_bool("CONDITIONAL_ENTRY", True),
         )
-        cfg.trading.markets = _load_markets_from_env()
+        # Strategies are in-memory only: each process start begins with a
+        # clean strategy list, populated via interactive setup or Telegram
+        # /strategy add. No env-var or config.json loading for strategies.
         cfg._overlay_config_file()
         return cfg
 
     # --- persistence -------------------------------------------------------
     def save_trading(self) -> None:
-        """Persist the mutable trading parameters to config.json."""
+        """Persist global trading parameters to config.json.
+
+        NOTE: strategies list is intentionally NOT persisted — it lives in
+        memory only. Each process start begins with a clean strategy list
+        (from .env or interactive setup). This prevents stale/duplicate
+        strategies from accumulating across restarts.
+
+        NOTE: conditional_entry is intentionally NOT persisted — it is
+        controlled solely by .env CONDITIONAL_ENTRY so that the mode is
+        deterministic on each restart. /triggermode changes are in-memory
+        only and reset on restart.
+        """
         data = {
-            "markets": [
-                {"token_id": m.token_id, "label": m.label} for m in self.trading.markets
-            ],
-            "active_market_index": self.trading.active_market_index,
             "share_amount": self.trading.share_amount,
             "entry_price": self.trading.entry_price,
             "exit_price": self.trading.exit_price,
             "take_profit_pct": self.trading.take_profit_pct,
             "stop_loss_pct": self.trading.stop_loss_pct,
-            "conditional_entry": self.trading.conditional_entry,
         }
         tmp = self.config_file + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
@@ -230,17 +264,7 @@ class Config:
         if not isinstance(data, dict):
             return
 
-        markets = data.get("markets")
-        if isinstance(markets, list) and markets:
-            self.trading.markets = [
-                Market(token_id=str(m.get("token_id", "")), label=str(m.get("label", "")))
-                for m in markets
-                if m.get("token_id")
-            ]
-        idx = data.get("active_market_index")
-        if isinstance(idx, int):
-            self.trading.active_market_index = idx
-
+        # Global params
         for key in ("share_amount", "entry_price", "exit_price"):
             val = data.get(key)
             if isinstance(val, (int, float)):
@@ -258,9 +282,15 @@ class Config:
         elif isinstance(sl, (int, float)):
             self.trading.stop_loss_pct = float(sl)
 
-        tm = data.get("conditional_entry")
-        if isinstance(tm, bool):
-            self.trading.conditional_entry = tm
+        # NOTE: conditional_entry is intentionally NOT loaded from config.json
+        # — it is controlled solely by .env CONDITIONAL_ENTRY so that the mode
+        # is deterministic on each restart. /triggermode changes are in-memory
+        # only and reset on restart.
+
+        # NOTE: strategies are NOT loaded from config.json — they are purely
+        # in-memory. Each process start begins with a clean strategy list
+        # (from .env TOKEN_ID/MARKETS or interactive setup). This prevents
+        # stale/duplicate strategies from accumulating across restarts.
 
     # --- helpers -----------------------------------------------------------
     def has_notifications(self) -> bool:
@@ -268,20 +298,6 @@ class Config:
 
     def has_interactive_bot(self) -> bool:
         return bool(self.telegram_interactive_token)
-
-
-def _load_markets_from_env() -> list[Market]:
-    markets_json = _parse_json_list("MARKETS")
-    if markets_json:
-        return [
-            Market(token_id=str(m.get("token_id", "")), label=str(m.get("label", "")))
-            for m in markets_json
-            if m.get("token_id")
-        ]
-    token_id = _env("TOKEN_ID")
-    if token_id:
-        return [Market(token_id=token_id, label=_env("MARKET_LABEL"))]
-    return []
 
 
 class ConfigGuard:
@@ -304,8 +320,21 @@ class ConfigGuard:
         with self._lock:
             t = self._config.trading
             return TradingParams(
-                markets=[Market(m.token_id, m.label) for m in t.markets],
-                active_market_index=t.active_market_index,
+                strategies=[
+                    Strategy(
+                        token_id=s.token_id,
+                        label=s.label,
+                        outcome_name=s.outcome_name,
+                        entry_price=s.entry_price,
+                        exit_price=s.exit_price,
+                        share_amount=s.share_amount,
+                        enabled=s.enabled,
+                        strategy_id=s.strategy_id,
+                        take_profit_pct=s.take_profit_pct,
+                        stop_loss_pct=s.stop_loss_pct,
+                    )
+                    for s in t.strategies
+                ],
                 share_amount=t.share_amount,
                 entry_price=t.entry_price,
                 exit_price=t.exit_price,
@@ -314,37 +343,7 @@ class ConfigGuard:
                 conditional_entry=t.conditional_entry,
             )
 
-    def active_market(self) -> Market | None:
-        with self._lock:
-            return self._config.trading.active_market()
-
-    def set_active_market(self, index: int) -> Market | None:
-        with self._lock:
-            t = self._config.trading
-            if not t.markets:
-                return None
-            if index < 0 or index >= len(t.markets):
-                return None
-            t.active_market_index = index
-            self._config.save_trading()
-            return t.markets[index]
-
-    def add_or_switch_market(self, token_id: str, label: str = "") -> Market:
-        with self._lock:
-            t = self._config.trading
-            for i, m in enumerate(t.markets):
-                if m.token_id == token_id:
-                    t.active_market_index = i
-                    if label:
-                        m.label = label
-                    self._config.save_trading()
-                    return m
-            market = Market(token_id=token_id, label=label)
-            t.markets.append(market)
-            t.active_market_index = len(t.markets) - 1
-            self._config.save_trading()
-            return market
-
+    # --- global params ----------------------------------------------------
     def update(
         self,
         *,
@@ -377,3 +376,78 @@ class ConfigGuard:
                 t.stop_loss_pct = None
             self._config.save_trading()
             return self.snapshot()
+
+    # --- strategy management ----------------------------------------------
+    def get_strategy(self, strategy_id: str) -> Strategy | None:
+        with self._lock:
+            return self._config.trading.get_strategy(strategy_id)
+
+    def list_strategies(self) -> list[Strategy]:
+        with self._lock:
+            return list(self._config.trading.strategies)
+
+    def list_enabled(self) -> list[Strategy]:
+        with self._lock:
+            return self._config.trading.list_enabled()
+
+    def add_strategy(self, strategy: Strategy) -> Strategy:
+        """Add a new strategy. If token_id already exists, update it instead.
+
+        NOTE: strategies are in-memory only, not persisted to config.json.
+        """
+        with self._lock:
+            t = self._config.trading
+            for i, s in enumerate(t.strategies):
+                if s.token_id == strategy.token_id:
+                    t.strategies[i] = strategy
+                    return strategy
+            t.strategies.append(strategy)
+            return strategy
+
+    def remove_strategy(self, strategy_id: str) -> bool:
+        """Remove a strategy by id. In-memory only, not persisted."""
+        with self._lock:
+            t = self._config.trading
+            before = len(t.strategies)
+            t.strategies = [s for s in t.strategies if s.strategy_id != strategy_id]
+            return len(t.strategies) < before
+
+    def update_strategy(
+        self,
+        strategy_id: str,
+        *,
+        entry_price: float | None = None,
+        exit_price: float | None = None,
+        share_amount: float | None = None,
+        enabled: bool | None = None,
+        label: str | None = None,
+        take_profit_pct: float | None = None,
+        stop_loss_pct: float | None = None,
+        clear_tp: bool = False,
+        clear_sl: bool = False,
+    ) -> Strategy | None:
+        """Update a strategy's params. In-memory only, not persisted."""
+        with self._lock:
+            t = self._config.trading
+            s = t.get_strategy(strategy_id)
+            if s is None:
+                return None
+            if entry_price is not None:
+                s.entry_price = entry_price
+            if exit_price is not None:
+                s.exit_price = exit_price
+            if share_amount is not None:
+                s.share_amount = share_amount
+            if enabled is not None:
+                s.enabled = enabled
+            if label is not None:
+                s.label = label
+            if take_profit_pct is not None:
+                s.take_profit_pct = take_profit_pct
+            if stop_loss_pct is not None:
+                s.stop_loss_pct = stop_loss_pct
+            if clear_tp:
+                s.take_profit_pct = None
+            if clear_sl:
+                s.stop_loss_pct = None
+            return s
