@@ -1,0 +1,1204 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>POLY·DESK — 静态原型</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Major+Mono+Display&family=JetBrains+Mono:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg-void:#0a0a0f;
+    --bg-surface:#14141c;
+    --bg-raised:#1c1c28;
+    --bg-deep:#07070b;
+    --border-hair:#2a2a3a;
+    --border-glow:#3a3a52;
+    --text-primary:#e4e4ef;
+    --text-secondary:#8a8aa0;
+    --text-muted:#5a5a72;
+    --acc-mint:#00ff9d;
+    --acc-rose:#ff3366;
+    --acc-amber:#ffaa00;
+    --acc-cyan:#00d4ff;
+    --acc-violet:#b388ff;
+    --grid-line:rgba(120,140,200,0.04);
+    --shadow-mint:0 0 12px rgba(0,255,157,0.25);
+    --shadow-rose:0 0 12px rgba(255,51,102,0.25);
+    --shadow-amber:0 0 12px rgba(255,170,0,0.22);
+    --shadow-cyan:0 0 12px rgba(0,212,255,0.22);
+    --shadow-violet:0 0 12px rgba(179,136,255,0.22);
+  }
+
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:
+      radial-gradient(ellipse at top left, #15151f 0%, #0a0a0f 60%),
+      var(--bg-void);
+    color:var(--text-primary);
+    font-family:'IBM Plex Sans',sans-serif;
+    font-size:13px;
+    line-height:1.45;
+    -webkit-font-smoothing:antialiased;
+    display:flex;
+    justify-content:center;
+    align-items:flex-start;
+    padding:32px 16px 80px;
+    min-height:100vh;
+  }
+
+  /* 模拟浏览器周围的微光 */
+  body::before{
+    content:"";
+    position:fixed;inset:0;
+    background:
+      radial-gradient(circle at 20% 10%, rgba(0,212,255,0.04), transparent 40%),
+      radial-gradient(circle at 80% 90%, rgba(179,136,255,0.04), transparent 40%);
+    pointer-events:none;
+    z-index:0;
+  }
+
+  /* 侧边栏容器 420px */
+  .sidebar{
+    position:relative;
+    width:420px;
+    background:var(--bg-void);
+    border:1px solid var(--border-hair);
+    border-radius:2px;
+    overflow:hidden;
+    z-index:1;
+    box-shadow:
+      0 0 0 1px rgba(0,0,0,0.5),
+      0 30px 80px rgba(0,0,0,0.6),
+      0 0 60px rgba(0,212,255,0.04);
+  }
+
+  /* 网格背景纹理 */
+  .sidebar::before{
+    content:"";
+    position:absolute;inset:0;
+    background-image:
+      linear-gradient(var(--grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+    background-size:24px 24px;
+    pointer-events:none;
+    z-index:0;
+  }
+
+  .sidebar > *{position:relative;z-index:1}
+
+  /* ============ 顶栏 ============ */
+  .topbar{
+    height:48px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:0 14px;
+    background:linear-gradient(180deg, #11111a 0%, #0c0c14 100%);
+    border-bottom:1px solid var(--border-hair);
+  }
+  .brand{
+    font-family:'Major Mono Display',monospace;
+    font-size:15px;
+    letter-spacing:0.08em;
+    color:var(--text-primary);
+    text-transform:lowercase;
+  }
+  .brand .dot{color:var(--acc-mint)}
+  .topbar-right{
+    display:flex;align-items:center;gap:12px;
+    font-family:'JetBrains Mono',monospace;
+    font-size:11px;
+  }
+  .conn{
+    display:flex;align-items:center;gap:6px;
+    color:var(--acc-mint);
+  }
+  .conn-dot{
+    width:6px;height:6px;border-radius:50%;
+    background:var(--acc-mint);
+    box-shadow:0 0 8px var(--acc-mint);
+    animation:pulse 2.4s ease-in-out infinite;
+  }
+  @keyframes pulse{
+    0%,100%{opacity:1}
+    50%{opacity:0.45}
+  }
+  .icon-btn{
+    width:24px;height:24px;
+    display:flex;align-items:center;justify-content:center;
+    color:var(--text-secondary);
+    cursor:pointer;
+    border:1px solid transparent;
+    border-radius:2px;
+    transition:all 180ms ease;
+  }
+  .icon-btn:hover{
+    color:var(--text-primary);
+    border-color:var(--border-glow);
+    background:var(--bg-raised);
+  }
+
+  /* ============ 区块通用 ============ */
+  .section{
+    padding:14px;
+    border-bottom:1px solid var(--border-hair);
+  }
+  .section-head{
+    display:flex;align-items:center;justify-content:space-between;
+    margin-bottom:10px;
+  }
+  .section-title{
+    font-family:'JetBrains Mono',monospace;
+    font-size:10px;
+    font-weight:600;
+    letter-spacing:0.18em;
+    color:var(--text-secondary);
+    text-transform:uppercase;
+  }
+  .section-title::before{
+    content:"▍ ";
+    color:var(--acc-cyan);
+  }
+  .section-meta{
+    font-family:'JetBrains Mono',monospace;
+    font-size:10px;
+    color:var(--text-muted);
+  }
+  .section-meta .toggle-all{
+    margin-left:10px;
+    color:var(--acc-cyan);
+    cursor:pointer;
+    padding:1px 6px;
+    border:1px solid var(--border-hair);
+    border-radius:2px;
+    transition:all 180ms ease;
+    font-size:10px;
+  }
+  .section-meta .toggle-all:hover{
+    border-color:var(--acc-cyan);
+    background:rgba(0,212,255,0.08);
+  }
+
+  /* ============ 状态区（紧凑单行） ============ */
+  .status-grid{
+    display:flex;
+    align-items:center;
+    gap:0;
+    background:var(--bg-surface);
+    border:1px solid var(--border-hair);
+    border-radius:2px;
+  }
+  .stat{
+    flex:1;
+    padding:7px 10px;
+    display:flex;
+    align-items:baseline;
+    gap:6px;
+    border-right:1px solid var(--border-hair);
+    min-width:0;
+  }
+  .stat:last-child{border-right:none}
+  .stat-label{
+    font-family:'JetBrains Mono',monospace;
+    font-size:9px;
+    letter-spacing:0.1em;
+    color:var(--text-muted);
+    text-transform:uppercase;
+    flex-shrink:0;
+  }
+  .stat-value{
+    font-family:'JetBrains Mono',monospace;
+    font-size:13px;
+    font-weight:600;
+    color:var(--text-primary);
+    line-height:1;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  .stat-value.mint{color:var(--acc-mint);text-shadow:0 0 10px rgba(0,255,157,0.35)}
+  .stat-value.rose{color:var(--acc-rose);text-shadow:0 0 10px rgba(255,51,102,0.35)}
+  .stat-unit{
+    font-size:9px;
+    color:var(--text-muted);
+    font-weight:400;
+  }
+
+  /* ============ 全局指令栏 ============ */
+  .global-cmd{
+    display:grid;
+    grid-template-columns:1fr 1fr 1fr;
+    gap:8px;
+  }
+  .gbtn{
+    height:34px;
+    background:var(--bg-surface);
+    border:1px solid var(--border-hair);
+    color:var(--text-primary);
+    font-family:'IBM Plex Sans',sans-serif;
+    font-size:12px;
+    font-weight:500;
+    letter-spacing:0.04em;
+    cursor:pointer;
+    border-radius:2px;
+    transition:all 180ms ease;
+    display:flex;align-items:center;justify-content:center;gap:6px;
+  }
+  .gbtn:hover{border-color:var(--border-glow);background:var(--bg-raised)}
+  .gbtn.stop:hover{color:var(--acc-amber);border-color:var(--acc-amber);box-shadow:var(--shadow-amber)}
+  .gbtn.close:hover{color:var(--acc-rose);border-color:var(--acc-rose);box-shadow:var(--shadow-rose)}
+  .gbtn.delete:hover{color:var(--acc-violet);border-color:var(--acc-violet);box-shadow:var(--shadow-violet)}
+  .gbtn::before{
+    font-family:'JetBrains Mono',monospace;
+    font-size:9px;
+    opacity:0.7;
+  }
+  .gbtn.stop::before{content:"■"}
+  .gbtn.close::before{content:"✕"}
+  .gbtn.delete::before{content:"⌫"}
+
+  /* ============ 下单区 ============ */
+  .order-section{padding:0}
+  .order-l1{
+    border-bottom:1px solid var(--border-hair);
+    padding:14px;
+  }
+  .url-bar{
+    display:flex;align-items:center;gap:8px;
+    background:var(--bg-deep);
+    border:1px solid var(--border-hair);
+    padding:6px 10px;
+    margin-bottom:10px;
+    border-radius:2px;
+    font-family:'JetBrains Mono',monospace;
+    font-size:10px;
+    color:var(--text-secondary);
+  }
+  .url-bar .url-tag{
+    color:var(--acc-cyan);
+    background:rgba(0,212,255,0.08);
+    padding:1px 6px;
+    border:1px solid rgba(0,212,255,0.2);
+    border-radius:2px;
+    font-size:9px;
+    letter-spacing:0.08em;
+  }
+  .url-bar .url-text{
+    color:var(--text-primary);
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+    flex:1;
+  }
+
+  .direction-list{display:flex;flex-direction:column;gap:4px}
+  .direction{
+    background:var(--bg-surface);
+    border:1px solid var(--border-hair);
+    border-radius:2px;
+    padding:0;
+    transition:all 180ms ease;
+    cursor:pointer;
+  }
+  .direction:hover{border-color:var(--border-glow)}
+  .direction.active{
+    border-color:var(--acc-cyan);
+    background:var(--bg-raised);
+    box-shadow:var(--shadow-cyan);
+  }
+  .direction.has-position{border-left:2px solid var(--acc-mint)}
+  .direction.has-order{border-left:2px solid var(--acc-amber)}
+  .dir-row{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:9px 12px;
+    font-family:'JetBrains Mono',monospace;
+    font-size:12px;
+  }
+  .dir-name{
+    color:var(--text-primary);
+    font-weight:500;
+    display:flex;align-items:center;gap:8px;
+  }
+  .dir-name .badge{
+    font-size:8px;
+    padding:1px 5px;
+    border-radius:2px;
+    letter-spacing:0.08em;
+    font-weight:600;
+  }
+  .badge.pos{color:var(--acc-mint);background:rgba(0,255,157,0.1);border:1px solid rgba(0,255,157,0.25)}
+  .badge.ord{color:var(--acc-amber);background:rgba(255,170,0,0.1);border:1px solid rgba(255,170,0,0.25)}
+  .dir-prices{
+    display:flex;gap:10px;
+    color:var(--text-secondary);
+    font-size:11px;
+  }
+  .dir-prices .bid{color:var(--acc-mint)}
+  .dir-prices .ask{color:var(--acc-rose)}
+  .dir-prices .label{color:var(--text-muted);font-size:9px;margin-right:2px}
+
+  .dir-expand{
+    border-top:1px solid var(--border-hair);
+    padding:0;
+  }
+  .more-row{
+    text-align:center;
+    padding:9px;
+    font-family:'JetBrains Mono',monospace;
+    font-size:11px;
+    color:var(--acc-cyan);
+    background:rgba(0,212,255,0.06);
+    border:1px dashed var(--acc-cyan);
+    border-radius:2px;
+    margin-top:6px;
+    cursor:pointer;
+    transition:all 180ms ease;
+    font-weight:500;
+    letter-spacing:0.04em;
+  }
+  .more-row:hover{color:var(--acc-cyan);border-color:var(--acc-cyan)}
+
+  /* Layer 2 下单表单 */
+  .order-l2{
+    padding:14px;
+    background:linear-gradient(180deg, var(--bg-surface) 0%, var(--bg-void) 100%);
+  }
+  .l2-head{
+    display:flex;align-items:center;justify-content:space-between;
+    margin-bottom:12px;
+  }
+  .l2-title{
+    font-family:'JetBrains Mono',monospace;
+    font-size:11px;
+    color:var(--acc-cyan);
+    letter-spacing:0.08em;
+  }
+  .l2-title .arrow{color:var(--text-muted);margin:0 6px}
+  .l2-est{
+    font-family:'JetBrains Mono',monospace;
+    font-size:10px;
+    color:var(--text-secondary);
+  }
+  .l2-est .val{color:var(--acc-amber);font-weight:600}
+
+  .form-grid{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:8px;
+    margin-bottom:10px;
+  }
+  .field{display:flex;flex-direction:column;gap:4px}
+  .field.full{grid-column:1/-1}
+  .field-label{
+    font-family:'JetBrains Mono',monospace;
+    font-size:9px;
+    letter-spacing:0.1em;
+    color:var(--text-muted);
+    text-transform:uppercase;
+    display:flex;justify-content:space-between;align-items:center;
+  }
+  .field-label .req{color:var(--acc-rose)}
+  .field-label .opt{color:var(--text-muted);font-weight:400}
+  .field-input{
+    background:var(--bg-deep);
+    border:1px solid var(--border-hair);
+    color:var(--text-primary);
+    font-family:'JetBrains Mono',monospace;
+    font-size:14px;
+    font-weight:500;
+    padding:8px 10px;
+    border-radius:2px;
+    transition:all 180ms ease;
+    width:100%;
+  }
+  .field-input:focus{
+    outline:none;
+    border-color:var(--acc-cyan);
+    box-shadow:0 0 0 1px var(--acc-cyan), var(--shadow-cyan);
+  }
+  .field-input::placeholder{color:var(--text-muted)}
+  .field-suffix{
+    position:relative;
+  }
+  .field-suffix .sfx{
+    position:absolute;
+    right:10px;top:50%;transform:translateY(-50%);
+    font-family:'JetBrains Mono',monospace;
+    font-size:10px;
+    color:var(--text-muted);
+    pointer-events:none;
+  }
+  .field-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+
+  .l2-actions{
+    display:flex;gap:8px;margin-top:4px;
+  }
+  .btn{
+    height:36px;
+    border:1px solid var(--border-hair);
+    background:var(--bg-surface);
+    color:var(--text-primary);
+    font-family:'IBM Plex Sans',sans-serif;
+    font-size:12px;
+    font-weight:500;
+    letter-spacing:0.05em;
+    cursor:pointer;
+    border-radius:2px;
+    transition:all 180ms ease;
+    display:flex;align-items:center;justify-content:center;gap:6px;
+  }
+  .btn.primary{
+    flex:1;
+    background:linear-gradient(180deg, rgba(0,255,157,0.12) 0%, rgba(0,255,157,0.04) 100%);
+    border-color:var(--acc-mint);
+    color:var(--acc-mint);
+  }
+  .btn.primary:hover{
+    background:linear-gradient(180deg, rgba(0,255,157,0.22) 0%, rgba(0,255,157,0.08) 100%);
+    box-shadow:var(--shadow-mint);
+  }
+  .btn.ghost{padding:0 14px}
+  .btn.ghost:hover{border-color:var(--border-glow);background:var(--bg-raised)}
+
+  .reopen-banner{
+    display:flex;align-items:center;justify-content:space-between;
+    background:rgba(179,136,255,0.08);
+    border:1px solid rgba(179,136,255,0.3);
+    border-radius:2px;
+    padding:8px 10px;
+    margin-bottom:10px;
+    font-family:'JetBrains Mono',monospace;
+    font-size:10px;
+    color:var(--acc-violet);
+  }
+  .reopen-banner .back{
+    color:var(--acc-violet);
+    text-decoration:underline;
+    cursor:pointer;
+  }
+
+  /* ============ 持仓区 ============ */
+  .positions{display:flex;flex-direction:column;gap:8px}
+  .pos-card{
+    background:var(--bg-surface);
+    border:1px solid var(--border-hair);
+    border-radius:2px;
+    overflow:hidden;
+    transition:all 180ms ease;
+  }
+  .pos-card:hover{border-color:var(--border-glow)}
+  .pos-card.state-holding-with-sell{border-left:2px solid var(--acc-mint)}
+  .pos-card.state-holding-no-sell{border-left:2px solid var(--acc-rose);box-shadow:var(--shadow-rose)}
+  .pos-card.state-buy-pending{border-left:2px solid var(--acc-amber)}
+  .pos-card.state-waiting{border-left:2px solid var(--acc-cyan)}
+  .pos-card.state-closed{opacity:0.5;border-left:2px solid var(--text-muted)}
+  /* 收起态 */
+  .pos-card.collapsed .pos-body,.pos-card.collapsed .pos-actions{display:none}
+  .pos-card.collapsed .pos-head{border-bottom:none;padding:8px 12px;cursor:pointer}
+  .pos-card .pos-head{cursor:pointer}
+  .pos-head-left{display:flex;align-items:center;min-width:0;flex:1}
+  .pos-chevron{
+    font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-muted);
+    margin-right:8px;display:inline-block;width:10px;transition:transform 200ms ease;
+  }
+  .pos-card.collapsed .pos-chevron{transform:rotate(0deg)}
+  .pos-card:not(.collapsed) .pos-chevron{transform:rotate(90deg)}
+  .pos-summary{
+    display:none;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-secondary);
+    gap:10px;align-items:center;flex-wrap:wrap;
+    padding:0 12px 8px 30px;border-top:1px dashed var(--border-hair);padding-top:6px;
+  }
+  .pos-card.collapsed .pos-summary{display:flex}
+  .pos-summary .item{display:flex;gap:3px;align-items:baseline}
+  .pos-summary .item .k{font-size:8px;color:var(--text-muted);letter-spacing:0.08em;text-transform:uppercase}
+  .pos-summary .item .v{color:var(--text-primary)}
+  .pos-summary .item .v.mint{color:var(--acc-mint)}
+  .pos-summary .item .v.rose{color:var(--acc-rose)}
+  .pos-summary .sep{color:var(--border-hair)}
+
+  .pos-head{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:10px 12px 8px;
+    border-bottom:1px solid var(--border-hair);
+  }
+  .pos-label{
+    font-family:'IBM Plex Sans',sans-serif;
+    font-size:12px;
+    font-weight:600;
+    color:var(--text-primary);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  .pos-label .sub{
+    font-family:'JetBrains Mono',monospace;
+    font-size:10px;
+    color:var(--text-muted);
+    font-weight:400;
+    margin-left:4px;
+  }
+  .pos-state{
+    display:flex;align-items:center;gap:6px;
+    font-family:'JetBrains Mono',monospace;
+    font-size:9px;
+    letter-spacing:0.08em;
+  }
+  .state-dot{
+    width:6px;height:6px;border-radius:50%;
+  }
+  .state-holding-with-sell .state-dot{background:var(--acc-mint);box-shadow:0 0 6px var(--acc-mint)}
+  .state-holding-with-sell .pos-state{color:var(--acc-mint)}
+  .state-holding-no-sell .state-dot{background:var(--acc-rose);box-shadow:0 0 6px var(--acc-rose);animation:pulse 1.6s infinite}
+  .state-holding-no-sell .pos-state{color:var(--acc-rose)}
+  .state-buy-pending .state-dot{background:var(--acc-amber);box-shadow:0 0 6px var(--acc-amber);animation:pulse 1.6s infinite}
+  .state-buy-pending .pos-state{color:var(--acc-amber)}
+  .state-waiting .state-dot{background:var(--acc-cyan);box-shadow:0 0 6px var(--acc-cyan)}
+  .state-waiting .pos-state{color:var(--acc-cyan)}
+  .state-closed .state-dot{background:var(--text-muted)}
+  .state-closed .pos-state{color:var(--text-muted)}
+
+  .pos-cycle{
+    font-family:'JetBrains Mono',monospace;
+    font-size:9px;
+    color:var(--text-muted);
+    margin-left:8px;
+  }
+
+  .pos-body{padding:10px 12px}
+  .pos-row{
+    display:grid;
+    grid-template-columns:1fr 1fr 1fr;
+    gap:8px;
+    font-family:'JetBrains Mono',monospace;
+    font-size:11px;
+    margin-bottom:6px;
+  }
+  .pos-row:last-child{margin-bottom:0}
+  .pos-field{
+    display:flex;flex-direction:column;gap:2px;
+  }
+  .pos-field .k{
+    font-size:9px;
+    color:var(--text-muted);
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+  }
+  .pos-field .v{
+    color:var(--text-primary);
+    font-weight:500;
+  }
+  .pos-field .v.mint{color:var(--acc-mint)}
+  .pos-field .v.rose{color:var(--acc-rose)}
+  .pos-field .v.amber{color:var(--acc-amber)}
+
+  .pos-triggers{
+    background:var(--bg-deep);
+    border:1px solid var(--border-hair);
+    border-radius:2px;
+    padding:8px 10px;
+    margin-top:8px;
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:8px;
+    font-family:'JetBrains Mono',monospace;
+    font-size:10px;
+  }
+  .trig{display:flex;flex-direction:column;gap:2px}
+  .trig .k{color:var(--text-muted);font-size:9px;letter-spacing:0.08em}
+  .trig .v{color:var(--text-primary)}
+  .trig.tp .v{color:var(--acc-mint)}
+  .trig.sl .v{color:var(--acc-rose)}
+
+  .pos-actions{
+    display:flex;gap:4px;
+    padding:8px 12px;
+    background:var(--bg-deep);
+    border-top:1px solid var(--border-hair);
+  }
+  .pos-actions .btn{
+    flex:1;
+    height:30px;
+    font-size:11px;
+    padding:0;
+  }
+  .pos-actions .btn.stop{color:var(--acc-amber)}
+  .pos-actions .btn.stop:hover{border-color:var(--acc-amber);box-shadow:var(--shadow-amber)}
+  .pos-actions .btn.close{color:var(--acc-rose)}
+  .pos-actions .btn.close:hover{border-color:var(--acc-rose);box-shadow:var(--shadow-rose)}
+  .pos-actions .btn.reopen{color:var(--acc-violet)}
+  .pos-actions .btn.reopen:hover{border-color:var(--acc-violet);box-shadow:var(--shadow-violet)}
+  .pos-actions .btn.delete{color:var(--text-secondary)}
+  .pos-actions .btn.delete:hover{color:var(--acc-rose);border-color:var(--acc-rose)}
+  .pos-actions .btn.disabled{opacity:0.25;cursor:not-allowed;pointer-events:none}
+
+  /* ============ 静态确认弹窗示例 ============ */
+  .modal-overlay{
+    position:fixed;
+    inset:0;
+    background:rgba(5,5,10,0.75);
+    backdrop-filter:blur(6px);
+    -webkit-backdrop-filter:blur(6px);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    z-index:100;
+  }
+  .modal{
+    width:380px;
+    background:var(--bg-surface);
+    border:1px solid var(--border-glow);
+    border-radius:2px;
+    box-shadow:0 30px 80px rgba(0,0,0,0.7), 0 0 40px rgba(255,51,102,0.15);
+    overflow:hidden;
+    animation:slideUp 240ms cubic-bezier(0.2,0.8,0.2,1);
+  }
+  @keyframes slideUp{
+    from{transform:translateY(20px);opacity:0}
+    to{transform:translateY(0);opacity:1}
+  }
+  .modal-head{
+    padding:14px 16px 10px;
+    border-bottom:1px solid var(--border-hair);
+    display:flex;align-items:center;justify-content:space-between;
+  }
+  .modal-title{
+    font-family:'IBM Plex Sans',sans-serif;
+    font-size:14px;
+    font-weight:600;
+    color:var(--acc-rose);
+    display:flex;align-items:center;gap:8px;
+  }
+  .modal-title::before{
+    content:"⚠";
+    font-family:'JetBrains Mono',monospace;
+    color:var(--acc-rose);
+  }
+  .modal-close{
+    color:var(--text-muted);
+    cursor:pointer;
+    font-family:'JetBrains Mono',monospace;
+    font-size:14px;
+  }
+  .modal-body{padding:14px 16px}
+  .impact-list{
+    background:var(--bg-deep);
+    border:1px solid var(--border-hair);
+    border-radius:2px;
+    padding:10px 12px;
+    margin-bottom:12px;
+  }
+  .impact-item{
+    display:flex;align-items:flex-start;gap:8px;
+    font-family:'JetBrains Mono',monospace;
+    font-size:11px;
+    color:var(--text-primary);
+    padding:4px 0;
+  }
+  .impact-item::before{
+    content:"·";
+    color:var(--acc-rose);
+    font-weight:700;
+    flex-shrink:0;
+  }
+  .impact-item .num{color:var(--acc-amber);font-weight:600}
+  .impact-item .num.mint{color:var(--acc-mint)}
+  .impact-item .num.rose{color:var(--acc-rose)}
+  .impact-warn{
+    color:var(--acc-amber);
+    font-family:'JetBrains Mono',monospace;
+    font-size:10px;
+    margin-top:8px;
+    padding:6px 8px;
+    background:rgba(255,170,0,0.06);
+    border-left:2px solid var(--acc-amber);
+  }
+  .modal-actions{
+    display:flex;gap:8px;
+    padding:0 16px 16px;
+  }
+  .modal-actions .btn{flex:1;height:36px}
+  .modal-actions .btn.cancel{
+    color:var(--text-secondary);
+  }
+  .modal-actions .btn.confirm{
+    background:linear-gradient(180deg, rgba(255,51,102,0.18) 0%, rgba(255,51,102,0.06) 100%);
+    border-color:var(--acc-rose);
+    color:var(--acc-rose);
+  }
+  .modal-actions .btn.confirm:hover{
+    box-shadow:var(--shadow-rose);
+  }
+
+  /* 演示标签 */
+  .demo-label{
+    position:fixed;
+    top:12px;left:12px;
+    font-family:'JetBrains Mono',monospace;
+    font-size:10px;
+    color:var(--text-muted);
+    letter-spacing:0.1em;
+    z-index:10;
+  }
+  .demo-label .tag{
+    color:var(--acc-cyan);
+    background:rgba(0,212,255,0.08);
+    padding:2px 8px;
+    border:1px solid rgba(0,212,255,0.25);
+    border-radius:2px;
+    margin-right:6px;
+  }
+
+  /* 重新开单高亮闪烁（静态展示一帧） */
+  .l2-highlight{
+    animation:highlight 1.6s ease-in-out infinite;
+  }
+  @keyframes highlight{
+    0%,100%{box-shadow:0 0 0 1px var(--acc-violet), 0 0 0 rgba(179,136,255,0)}
+    50%{box-shadow:0 0 0 1px var(--acc-violet), 0 0 24px rgba(179,136,255,0.4)}
+  }
+</style>
+</head>
+<body>
+
+<div class="demo-label"><span class="tag">STATIC</span>POLY·DESK 侧边栏原型 · 暗色交易终端 · 全状态展示</div>
+
+<!-- ============ 侧边栏 ============ -->
+<div class="sidebar">
+
+  <!-- 顶栏 -->
+  <div class="topbar">
+    <div class="brand">poly<span class="dot">·</span>desk</div>
+    <div class="topbar-right">
+      <div class="conn"><span class="conn-dot"></span><span>FASTAPI · 12ms</span></div>
+      <div class="icon-btn" title="设置">⚙</div>
+    </div>
+  </div>
+
+  <!-- 状态区（紧凑单行） -->
+  <div class="section" style="padding:8px 14px">
+    <div class="status-grid">
+      <div class="stat">
+        <span class="stat-label">POS</span>
+        <span class="stat-value">3<span class="stat-unit">/5</span></span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">CAPITAL</span>
+        <span class="stat-value">94.21<span class="stat-unit">U</span></span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">PNL</span>
+        <span class="stat-value mint">+12.40<span class="stat-unit">(13.16%)</span></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 全局指令栏 -->
+  <div class="section">
+    <div class="section-head">
+      <div class="section-title">GLOBAL COMMAND</div>
+      <div class="section-meta">影响汇总 · 二次确认</div>
+    </div>
+    <div class="global-cmd">
+      <button class="gbtn stop">全部停止</button>
+      <button class="gbtn close">全部平仓</button>
+      <button class="gbtn delete">全部删除</button>
+    </div>
+  </div>
+
+  <!-- 下单区 Layer 1 -->
+  <div class="section order-section">
+    <div class="order-l1">
+      <div class="section-head">
+        <div class="section-title">ORDER · L1 DIRECTIONS</div>
+        <div class="section-meta">当前 URL 解析 · top 5</div>
+      </div>
+
+      <div class="url-bar">
+        <span class="url-tag">URL</span>
+        <span class="url-text">polymarket.com/event/lpl-s13-finals</span>
+      </div>
+
+      <div class="direction-list">
+        <!-- 选中并展开的方向 -->
+        <div class="direction active has-position">
+          <div class="dir-row">
+            <div class="dir-name">
+              Team WE
+              <span class="badge pos">持仓</span>
+            </div>
+            <div class="dir-prices">
+              <span><span class="label">BID</span><span class="bid">0.48</span></span>
+              <span><span class="label">ASK</span><span class="ask">0.50</span></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="direction has-order">
+          <div class="dir-row">
+            <div class="dir-name">
+              Team IG
+              <span class="badge ord">挂单</span>
+            </div>
+            <div class="dir-prices">
+              <span><span class="label">BID</span><span class="bid">0.55</span></span>
+              <span><span class="label">ASK</span><span class="ask">0.57</span></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="direction">
+          <div class="dir-row">
+            <div class="dir-name">Team JDG</div>
+            <div class="dir-prices">
+              <span><span class="label">BID</span><span class="bid">0.60</span></span>
+              <span><span class="label">ASK</span><span class="ask">0.62</span></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="direction">
+          <div class="dir-row">
+            <div class="dir-name">Team RA</div>
+            <div class="dir-prices">
+              <span><span class="label">BID</span><span class="bid">0.34</span></span>
+              <span><span class="label">ASK</span><span class="ask">0.36</span></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="direction">
+          <div class="dir-row">
+            <div class="dir-name">Team EDG</div>
+            <div class="dir-prices">
+              <span><span class="label">BID</span><span class="bid">0.20</span></span>
+              <span><span class="label">ASK</span><span class="ask">0.22</span></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="more-row">▼ 展开更多 (3)</div>
+      </div>
+    </div>
+
+    <!-- 下单区 Layer 2 -->
+    <div class="order-l2 l2-highlight">
+      <div class="l2-head">
+        <div class="l2-title">LPL S13 决赛 <span class="arrow">›</span> Team WE</div>
+        <div class="l2-est">预估投入 <span class="val">4.20 USDC</span></div>
+      </div>
+
+      <!-- 重新开单横幅（静态展示） -->
+      <div class="reopen-banner">
+        <span>⚠ 来自持仓 #1 的重新开单参数已预填</span>
+        <span class="back">← 返回当前 URL 下单区</span>
+      </div>
+
+      <div class="form-grid">
+        <div class="field">
+          <div class="field-label">买入价 <span class="req">ENTRY · 必填</span></div>
+          <div class="field-suffix">
+            <input class="field-input" type="text" value="0.42" />
+            <span class="sfx">USDC</span>
+          </div>
+        </div>
+        <div class="field">
+          <div class="field-label">卖出价 <span class="req">EXIT · 必填</span></div>
+          <div class="field-suffix">
+            <input class="field-input" type="text" value="0.55" />
+            <span class="sfx">USDC</span>
+          </div>
+        </div>
+        <div class="field full">
+          <div class="field-label">数量 <span class="opt">SHARE_AMOUNT</span></div>
+          <div class="field-suffix">
+            <input class="field-input" type="text" value="10" />
+            <span class="sfx">SHARES</span>
+          </div>
+        </div>
+        <div class="field">
+          <div class="field-label">止盈 <span class="opt">TP · 可空</span></div>
+          <div class="field-suffix">
+            <input class="field-input" type="text" value="0.10" />
+            <span class="sfx">+10%</span>
+          </div>
+        </div>
+        <div class="field">
+          <div class="field-label">止损 <span class="opt">SL · 可空</span></div>
+          <div class="field-suffix">
+            <input class="field-input" type="text" value="0.05" />
+            <span class="sfx">-5%</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="l2-actions">
+        <button class="btn primary">▶ 下单 · BUY 10 @ 0.42</button>
+        <button class="btn ghost">重置</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 持仓区 -->
+  <div class="section">
+    <div class="section-head">
+      <div class="section-title">POSITIONS</div>
+      <div class="section-meta">7 strategies · cycle 42 <span class="toggle-all">▶ 全部展开</span></div>
+    </div>
+    <div class="positions">
+
+      <!-- 收起态示例 1: 持仓中（已挂保护卖单）收起 -->
+      <div class="pos-card state-holding-with-sell collapsed">
+        <div class="pos-head">
+          <div class="pos-head-left">
+            <span class="pos-chevron">▶</span>
+            <span class="pos-label">T1 <span class="sub">Worlds 2026 小组赛</span></span>
+          </div>
+          <div>
+            <span class="pos-state"><span class="state-dot"></span>持仓·已挂卖单</span>
+            <span class="pos-cycle">cyc 18</span>
+          </div>
+        </div>
+        <div class="pos-summary">
+          <div class="item"><span class="k">E</span><span class="v">0.62</span></div>
+          <span class="sep">·</span>
+          <div class="item"><span class="k">X</span><span class="v">0.75</span></div>
+          <span class="sep">·</span>
+          <div class="item"><span class="k">SZ</span><span class="v">80</span></div>
+          <span class="sep">·</span>
+          <div class="item"><span class="k">AVG</span><span class="v">0.6210</span></div>
+          <span class="sep">·</span>
+          <div class="item"><span class="k">PNL</span><span class="v mint">+8.32 (+16.7%)</span></div>
+        </div>
+      </div>
+
+      <!-- 收起态示例 2: 已挂买单（待成交）收起 -->
+      <div class="pos-card state-buy-pending collapsed">
+        <div class="pos-head">
+          <div class="pos-head-left">
+            <span class="pos-chevron">▶</span>
+            <span class="pos-label">GEN <span class="sub">Worlds 2026 小组赛</span></span>
+          </div>
+          <div>
+            <span class="pos-state"><span class="state-dot"></span>已挂买单·待成交</span>
+            <span class="pos-cycle">cyc 5</span>
+          </div>
+        </div>
+        <div class="pos-summary">
+          <div class="item"><span class="k">E</span><span class="v">0.58</span></div>
+          <span class="sep">·</span>
+          <div class="item"><span class="k">X</span><span class="v">0.68</span></div>
+          <span class="sep">·</span>
+          <div class="item"><span class="k">SZ</span><span class="v">120</span></div>
+          <div class="item"><span class="k">TP/SL</span><span class="v">10.0% / 5.0%</span></div>
+        </div>
+      </div>
+
+      <!-- 持仓 1: 持仓中（已挂保护卖单） — 完整 TP/SL 触发价（展开态） -->
+      <div class="pos-card state-holding-with-sell">
+        <div class="pos-head">
+          <div class="pos-head-left">
+            <span class="pos-chevron">▶</span>
+            <span class="pos-label">Team WE <span class="sub">LPL S13 决赛</span></span>
+          </div>
+          <div>
+            <span class="pos-state"><span class="state-dot"></span>持仓·已挂卖单</span>
+            <span class="pos-cycle">cyc 42</span>
+          </div>
+        </div>
+        <div class="pos-body">
+          <div class="pos-row">
+            <div class="pos-field"><span class="k">ENTRY</span><span class="v">0.42</span></div>
+            <div class="pos-field"><span class="k">EXIT</span><span class="v">0.55</span></div>
+            <div class="pos-field"><span class="k">SIZE</span><span class="v">100</span></div>
+          </div>
+          <div class="pos-row">
+            <div class="pos-field"><span class="k">AVG</span><span class="v">0.4200</span></div>
+            <div class="pos-field"><span class="k">BID</span><span class="v mint">0.48</span></div>
+            <div class="pos-field"><span class="k">PNL</span><span class="v mint">+6.00 (+14.3%)</span></div>
+          </div>
+          <div class="pos-triggers">
+            <div class="trig tp"><span class="k">TP TRIGGER</span><span class="v">0.4620  (+10%)</span></div>
+            <div class="trig sl"><span class="k">SL TRIGGER</span><span class="v">0.3990  (-5%)</span></div>
+          </div>
+        </div>
+        <div class="pos-actions">
+          <button class="btn stop">撤卖单</button>
+          <button class="btn close">平仓</button>
+          <button class="btn reopen">重新开单</button>
+          <button class="btn delete disabled">删除</button>
+        </div>
+      </div>
+
+      <!-- 持仓 2: 已挂买单（待成交） -->
+      <div class="pos-card state-buy-pending">
+        <div class="pos-head">
+          <div class="pos-head-left">
+            <span class="pos-chevron">▶</span>
+            <span class="pos-label">Team IG <span class="sub">LPL S13 半决赛</span></span>
+          </div>
+          <div>
+            <span class="pos-state"><span class="state-dot"></span>已挂买单·待成交</span>
+            <span class="pos-cycle">cyc 7</span>
+          </div>
+        </div>
+        <div class="pos-body">
+          <div class="pos-row">
+            <div class="pos-field"><span class="k">ENTRY</span><span class="v">0.55</span></div>
+            <div class="pos-field"><span class="k">EXIT</span><span class="v">0.65</span></div>
+            <div class="pos-field"><span class="k">SIZE</span><span class="v">50</span></div>
+          </div>
+          <div class="pos-row">
+            <div class="pos-field"><span class="k">AVG</span><span class="v">—</span></div>
+            <div class="pos-field"><span class="k">BID</span><span class="v">0.55</span></div>
+            <div class="pos-field"><span class="k">ASK</span><span class="v amber">0.57</span></div>
+          </div>
+          <div class="pos-triggers">
+            <div class="trig tp"><span class="k">TP TRIGGER</span><span class="v">成交后激活 (+15%)</span></div>
+            <div class="trig sl"><span class="k">SL TRIGGER</span><span class="v">成交后激活 (-8%)</span></div>
+          </div>
+        </div>
+        <div class="pos-actions">
+          <button class="btn stop">撤单</button>
+          <button class="btn close disabled">平仓</button>
+          <button class="btn reopen">重新开单</button>
+          <button class="btn delete">删除</button>
+        </div>
+      </div>
+
+      <!-- 持仓 3: 持仓中（待挂卖单） — 危险态 -->
+      <div class="pos-card state-holding-no-sell">
+        <div class="pos-head">
+          <div class="pos-head-left">
+            <span class="pos-chevron">▶</span>
+            <div class="pos-label">Team RA <span class="sub">LPL S13 半决赛</span></div>
+          </div>
+          <div>
+            <span class="pos-state"><span class="state-dot"></span>持仓·待挂卖单</span>
+            <span class="pos-cycle">cyc 23</span>
+          </div>
+        </div>
+        <div class="pos-body">
+          <div class="pos-row">
+            <div class="pos-field"><span class="k">ENTRY</span><span class="v">0.30</span></div>
+            <div class="pos-field"><span class="k">EXIT</span><span class="v">0.40</span></div>
+            <div class="pos-field"><span class="k">SIZE</span><span class="v">200</span></div>
+          </div>
+          <div class="pos-row">
+            <div class="pos-field"><span class="k">AVG</span><span class="v">0.3010</span></div>
+            <div class="pos-field"><span class="k">BID</span><span class="v mint">0.35</span></div>
+            <div class="pos-field"><span class="k">PNL</span><span class="v mint">+9.80 (+16.3%)</span></div>
+          </div>
+          <div class="pos-triggers">
+            <div class="trig tp"><span class="k">TP TRIGGER</span><span class="v">0.3311  (+10%)</span></div>
+            <div class="trig sl"><span class="k">SL TRIGGER</span><span class="v">0.2860  (-5%)</span></div>
+          </div>
+        </div>
+        <div class="pos-actions">
+          <button class="btn stop disabled">停止</button>
+          <button class="btn close">平仓</button>
+          <button class="btn reopen">重新开单</button>
+          <button class="btn delete disabled">删除</button>
+        </div>
+      </div>
+
+      <!-- 持仓 4: 待入场 -->
+      <div class="pos-card state-waiting">
+        <div class="pos-head">
+          <div class="pos-head-left">
+            <span class="pos-chevron">▶</span>
+            <div class="pos-label">Team JDG <span class="sub">LPL S13 决赛</span></div>
+          </div>
+          <div>
+            <span class="pos-state"><span class="state-dot"></span>待入场</span>
+            <span class="pos-cycle">cyc 3</span>
+          </div>
+        </div>
+        <div class="pos-body">
+          <div class="pos-row">
+            <div class="pos-field"><span class="k">ENTRY</span><span class="v">0.60</span></div>
+            <div class="pos-field"><span class="k">EXIT</span><span class="v">0.70</span></div>
+            <div class="pos-field"><span class="k">SIZE</span><span class="v">80</span></div>
+          </div>
+          <div class="pos-row">
+            <div class="pos-field"><span class="k">AVG</span><span class="v">—</span></div>
+            <div class="pos-field"><span class="k">ASK</span><span class="v">0.62</span></div>
+            <div class="pos-field"><span class="k">TP/SL</span><span class="v" style="color:var(--text-muted)">未设置</span></div>
+          </div>
+          <div class="pos-triggers">
+            <div class="trig tp"><span class="k">TP</span><span class="v" style="color:var(--text-muted)">未配置</span></div>
+            <div class="trig sl"><span class="k">SL</span><span class="v" style="color:var(--text-muted)">未配置</span></div>
+          </div>
+        </div>
+        <div class="pos-actions">
+          <button class="btn stop">停止监控</button>
+          <button class="btn close disabled">平仓</button>
+          <button class="btn reopen">重新开单</button>
+          <button class="btn delete">删除</button>
+        </div>
+      </div>
+
+      <!-- 持仓 5: 已平仓 — 灰化 -->
+      <div class="pos-card state-closed">
+        <div class="pos-head">
+          <div class="pos-head-left">
+            <span class="pos-chevron">▶</span>
+            <div class="pos-label">Team EDG <span class="sub">LPL S13 季军赛</span></div>
+          </div>
+          <div>
+            <span class="pos-state"><span class="state-dot"></span>已平仓</span>
+            <span class="pos-cycle">cyc 156</span>
+          </div>
+        </div>
+        <div class="pos-body">
+          <div class="pos-row">
+            <div class="pos-field"><span class="k">ENTRY</span><span class="v">0.45</span></div>
+            <div class="pos-field"><span class="k">EXIT</span><span class="v">0.50</span></div>
+            <div class="pos-field"><span class="k">SIZE</span><span class="v">0</span></div>
+          </div>
+          <div class="pos-row">
+            <div class="pos-field"><span class="k">REALIZED</span><span class="v mint">+5.00 (+11.1%)</span></div>
+            <div class="pos-field"><span class="k">TP/SL</span><span class="v">10% / 5%</span></div>
+            <div class="pos-field"><span class="k">CLOSED</span><span class="v">14:28:51</span></div>
+          </div>
+        </div>
+        <div class="pos-actions">
+          <button class="btn stop disabled">停止</button>
+          <button class="btn close disabled">平仓</button>
+          <button class="btn reopen">重新开单</button>
+          <button class="btn delete">删除</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<!-- ============ 静态确认弹窗示例 ============ -->
+<div class="modal-overlay">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title">确认【全部平仓】</div>
+      <div class="modal-close">✕</div>
+    </div>
+    <div class="modal-body">
+      <div class="impact-list">
+        <div class="impact-item">撤销保护卖单 <span class="num">2</span> 笔</div>
+        <div class="impact-item">按 best_bid 市价卖出 <span class="num mint">2</span> 个持仓</div>
+        <div class="impact-item">预估回收 <span class="num mint">118.00</span> USDC（当前 mark 122.40）</div>
+        <div class="impact-item">滑点风险：±<span class="num rose">2.30</span> USDC</div>
+        <div class="impact-item">已平仓 <span class="num">1</span> 个策略将被跳过</div>
+        <div class="impact-item">待入场 <span class="num">1</span> 个策略不受影响</div>
+      </div>
+      <div class="impact-warn">⚠ 此操作不可撤销 · 卖单将立即下发至 CLOB · 网络异常时可能部分成交</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn cancel">取消</button>
+      <button class="btn confirm">确认执行</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

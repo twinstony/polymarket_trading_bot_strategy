@@ -1,0 +1,1405 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>POLY·DESK — 动态原型</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Major+Mono+Display&family=JetBrains+Mono:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg-void:#0a0a0f;
+    --bg-surface:#14141c;
+    --bg-raised:#1c1c28;
+    --bg-deep:#07070b;
+    --border-hair:#2a2a3a;
+    --border-glow:#3a3a52;
+    --text-primary:#e4e4ef;
+    --text-secondary:#8a8aa0;
+    --text-muted:#5a5a72;
+    --acc-mint:#00ff9d;
+    --acc-rose:#ff3366;
+    --acc-amber:#ffaa00;
+    --acc-cyan:#00d4ff;
+    --acc-violet:#b388ff;
+    --grid-line:rgba(120,140,200,0.04);
+    --shadow-mint:0 0 12px rgba(0,255,157,0.25);
+    --shadow-rose:0 0 12px rgba(255,51,102,0.25);
+    --shadow-amber:0 0 12px rgba(255,170,0,0.22);
+    --shadow-cyan:0 0 12px rgba(0,212,255,0.22);
+    --shadow-violet:0 0 12px rgba(179,136,255,0.22);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:radial-gradient(ellipse at top left, #15151f 0%, #0a0a0f 60%), var(--bg-void);
+    color:var(--text-primary);
+    font-family:'IBM Plex Sans',sans-serif;
+    font-size:13px;line-height:1.45;
+    -webkit-font-smoothing:antialiased;
+    display:flex;flex-direction:column;align-items:center;
+    padding:32px 16px 80px;min-height:100vh;
+  }
+  body::before{
+    content:"";position:fixed;inset:0;
+    background:
+      radial-gradient(circle at 20% 10%, rgba(0,212,255,0.04), transparent 40%),
+      radial-gradient(circle at 80% 90%, rgba(179,136,255,0.04), transparent 40%);
+    pointer-events:none;z-index:0;
+  }
+  .sidebar{
+    position:relative;width:420px;background:var(--bg-void);
+    border:1px solid var(--border-hair);border-radius:2px;overflow:hidden;z-index:1;
+    box-shadow:0 0 0 1px rgba(0,0,0,0.5), 0 30px 80px rgba(0,0,0,0.6), 0 0 60px rgba(0,212,255,0.04);
+  }
+  .sidebar::before{
+    content:"";position:absolute;inset:0;
+    background-image:
+      linear-gradient(var(--grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+    background-size:24px 24px;pointer-events:none;z-index:0;
+  }
+  .sidebar > *{position:relative;z-index:1}
+  .topbar{
+    height:48px;display:flex;align-items:center;justify-content:space-between;
+    padding:0 14px;
+    background:linear-gradient(180deg, #11111a 0%, #0c0c14 100%);
+    border-bottom:1px solid var(--border-hair);
+  }
+  .brand{font-family:'Major Mono Display',monospace;font-size:15px;letter-spacing:0.08em;color:var(--text-primary);text-transform:lowercase}
+  .brand .dot{color:var(--acc-mint)}
+  .topbar-right{display:flex;align-items:center;gap:12px;font-family:'JetBrains Mono',monospace;font-size:11px}
+  .conn{display:flex;align-items:center;gap:6px;color:var(--acc-mint)}
+  .conn.offline{color:var(--text-muted)}
+  .conn-dot{width:6px;height:6px;border-radius:50%;background:var(--acc-mint);box-shadow:0 0 8px var(--acc-mint);animation:pulse 2.4s ease-in-out infinite}
+  .conn.offline .conn-dot{background:var(--text-muted);box-shadow:none;animation:none}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.45}}
+  .icon-btn{width:24px;height:24px;display:flex;align-items:center;justify-content:center;color:var(--text-secondary);cursor:pointer;border:1px solid transparent;border-radius:2px;transition:all 180ms ease}
+  .icon-btn:hover{color:var(--text-primary);border-color:var(--border-glow);background:var(--bg-raised)}
+  .section{padding:14px;border-bottom:1px solid var(--border-hair)}
+  .section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+  .section-title{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;letter-spacing:0.18em;color:var(--text-secondary);text-transform:uppercase}
+  .section-title::before{content:"▍ ";color:var(--acc-cyan)}
+  .section-meta{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-muted)}
+  .section-meta .toggle-all{margin-left:10px;color:var(--acc-cyan);cursor:pointer;padding:1px 6px;border:1px solid var(--border-hair);border-radius:2px;transition:all 180ms ease}
+  .section-meta .toggle-all:hover{border-color:var(--acc-cyan);background:rgba(0,212,255,0.08)}
+  .status-grid{display:flex;align-items:center;gap:0;background:var(--bg-surface);border:1px solid var(--border-hair);border-radius:2px}
+  .stat{flex:1;padding:7px 10px;display:flex;align-items:baseline;gap:6px;border-right:1px solid var(--border-hair);min-width:0}
+  .stat:last-child{border-right:none}
+  .stat-label{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:0.1em;color:var(--text-muted);text-transform:uppercase;flex-shrink:0}
+  .stat-value{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;color:var(--text-primary);line-height:1;transition:color 200ms;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .stat-value.mint{color:var(--acc-mint);text-shadow:0 0 10px rgba(0,255,157,0.35)}
+  .stat-value.rose{color:var(--acc-rose);text-shadow:0 0 10px rgba(255,51,102,0.35)}
+  .stat-value.flash{animation:flash 200ms ease-out}
+  @keyframes flash{0%{text-shadow:0 0 0 rgba(255,255,255,0)}50%{text-shadow:0 0 12px rgba(255,255,255,0.5)}100%{text-shadow:0 0 0 rgba(255,255,255,0)}}
+  .stat-unit{font-size:9px;color:var(--text-muted);font-weight:400}
+  .global-cmd{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+  .gbtn{height:34px;background:var(--bg-surface);border:1px solid var(--border-hair);color:var(--text-primary);font-family:'IBM Plex Sans',sans-serif;font-size:12px;font-weight:500;letter-spacing:0.04em;cursor:pointer;border-radius:2px;transition:all 180ms ease;display:flex;align-items:center;justify-content:center;gap:6px}
+  .gbtn:hover{border-color:var(--border-glow);background:var(--bg-raised)}
+  .gbtn.stop:hover{color:var(--acc-amber);border-color:var(--acc-amber);box-shadow:var(--shadow-amber)}
+  .gbtn.close:hover{color:var(--acc-rose);border-color:var(--acc-rose);box-shadow:var(--shadow-rose)}
+  .gbtn.delete:hover{color:var(--acc-violet);border-color:var(--acc-violet);box-shadow:var(--shadow-violet)}
+  .gbtn::before{font-family:'JetBrains Mono',monospace;font-size:9px;opacity:0.7}
+  .gbtn.stop::before{content:"■"}
+  .gbtn.close::before{content:"✕"}
+  .gbtn.delete::before{content:"⌫"}
+  .order-section{padding:0}
+  .order-l1{border-bottom:1px solid var(--border-hair);padding:14px}
+  .url-bar{display:flex;align-items:center;gap:8px;background:var(--bg-deep);border:1px solid var(--border-hair);padding:6px 10px;margin-bottom:10px;border-radius:2px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-secondary)}
+  .url-bar .url-tag{color:var(--acc-cyan);background:rgba(0,212,255,0.08);padding:1px 6px;border:1px solid rgba(0,212,255,0.2);border-radius:2px;font-size:9px;letter-spacing:0.08em}
+  .url-bar .url-text{color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+  .url-bar .url-switch{color:var(--text-muted);cursor:pointer;font-size:11px;padding:0 4px}
+  .url-bar .url-switch:hover{color:var(--acc-cyan)}
+  .direction-list{display:flex;flex-direction:column;gap:4px}
+  .direction{background:var(--bg-surface);border:1px solid var(--border-hair);border-radius:2px;padding:0;transition:all 180ms ease;cursor:pointer}
+  .direction:hover{border-color:var(--border-glow)}
+  .direction.active{border-color:var(--acc-cyan);background:var(--bg-raised);box-shadow:var(--shadow-cyan)}
+  .direction.has-position{border-left:2px solid var(--acc-mint)}
+  .direction.has-order{border-left:2px solid var(--acc-amber)}
+  .dir-row{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;font-family:'JetBrains Mono',monospace;font-size:12px}
+  .dir-name{color:var(--text-primary);font-weight:500;display:flex;align-items:center;gap:8px}
+  .dir-name .badge{font-size:8px;padding:1px 5px;border-radius:2px;letter-spacing:0.08em;font-weight:600}
+  .badge.pos{color:var(--acc-mint);background:rgba(0,255,157,0.1);border:1px solid rgba(0,255,157,0.25)}
+  .badge.ord{color:var(--acc-amber);background:rgba(255,170,0,0.1);border:1px solid rgba(255,170,0,0.25)}
+  .dir-prices{display:flex;gap:10px;color:var(--text-secondary);font-size:11px}
+  .dir-prices .bid{color:var(--acc-mint)}
+  .dir-prices .ask{color:var(--acc-rose)}
+  .dir-prices .label{color:var(--text-muted);font-size:9px;margin-right:2px}
+  .more-row{text-align:center;padding:9px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--acc-cyan);background:rgba(0,212,255,0.06);border:1px dashed var(--acc-cyan);border-radius:2px;margin-top:6px;cursor:pointer;transition:all 180ms ease;font-weight:500;letter-spacing:0.04em}
+  .more-row:hover{background:rgba(0,212,255,0.14);box-shadow:var(--shadow-cyan)}
+  .more-row.expanded{color:var(--text-secondary);border-color:var(--border-hair);background:var(--bg-deep)}
+  .order-l2{padding:14px;background:linear-gradient(180deg, var(--bg-surface) 0%, var(--bg-void) 100%);max-height:600px;overflow:hidden;transition:max-height 300ms ease, opacity 200ms ease, box-shadow 300ms ease}
+  .order-l2.collapsed{max-height:0;padding-top:0;padding-bottom:0;opacity:0}
+  .order-l2.l2-highlight{animation:highlight 1.6s ease-in-out 3}
+  @keyframes highlight{0%,100%{box-shadow:0 0 0 1px var(--acc-violet), 0 0 0 rgba(179,136,255,0)}50%{box-shadow:0 0 0 1px var(--acc-violet), 0 0 24px rgba(179,136,255,0.4)}}
+  .l2-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .l2-title{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--acc-cyan);letter-spacing:0.08em}
+  .l2-title .arrow{color:var(--text-muted);margin:0 6px}
+  .l2-est{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-secondary)}
+  .l2-est .val{color:var(--acc-amber);font-weight:600}
+  .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+  .field{display:flex;flex-direction:column;gap:4px}
+  .field.full{grid-column:1/-1}
+  .field-label{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:0.1em;color:var(--text-muted);text-transform:uppercase;display:flex;justify-content:space-between;align-items:center}
+  .field-label .req{color:var(--acc-rose)}
+  .field-label .opt{color:var(--text-muted);font-weight:400}
+  .field-input{background:var(--bg-deep);border:1px solid var(--border-hair);color:var(--text-primary);font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:500;padding:8px 10px;border-radius:2px;transition:all 180ms ease;width:100%;width:calc(100% - 36px)}
+  .field-input:focus{outline:none;border-color:var(--acc-cyan);box-shadow:0 0 0 1px var(--acc-cyan), var(--shadow-cyan)}
+  .field-input::placeholder{color:var(--text-muted)}
+  .field-input.error{border-color:var(--acc-rose);box-shadow:0 0 0 1px var(--acc-rose)}
+  .field-suffix{position:relative}
+  .field-suffix .sfx{position:absolute;right:10px;top:50%;transform:translateY(-50%);font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-muted);pointer-events:none}
+  .l2-actions{display:flex;gap:8px;margin-top:4px}
+  .btn{height:36px;border:1px solid var(--border-hair);background:var(--bg-surface);color:var(--text-primary);font-family:'IBM Plex Sans',sans-serif;font-size:12px;font-weight:500;letter-spacing:0.05em;cursor:pointer;border-radius:2px;transition:all 180ms ease;display:flex;align-items:center;justify-content:center;gap:6px}
+  .btn.primary{flex:1;background:linear-gradient(180deg, rgba(0,255,157,0.12) 0%, rgba(0,255,157,0.04) 100%);border-color:var(--acc-mint);color:var(--acc-mint)}
+  .btn.primary:hover{background:linear-gradient(180deg, rgba(0,255,157,0.22) 0%, rgba(0,255,157,0.08) 100%);box-shadow:var(--shadow-mint)}
+  .btn.ghost{padding:0 14px}
+  .btn.ghost:hover{border-color:var(--border-glow);background:var(--bg-raised)}
+  .reopen-banner{display:flex;align-items:center;justify-content:space-between;background:rgba(179,136,255,0.08);border:1px solid rgba(179,136,255,0.3);border-radius:2px;padding:8px 10px;margin-bottom:10px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--acc-violet)}
+  .reopen-banner .back{color:var(--acc-violet);text-decoration:underline;cursor:pointer}
+  .positions{display:flex;flex-direction:column;gap:8px}
+  .pos-card{background:var(--bg-surface);border:1px solid var(--border-hair);border-radius:2px;overflow:hidden;transition:all 200ms ease}
+  .pos-card:hover{border-color:var(--border-glow)}
+  .pos-card.state-holding-with-sell{border-left:2px solid var(--acc-mint)}
+  .pos-card.state-holding-no-sell{border-left:2px solid var(--acc-rose);box-shadow:var(--shadow-rose)}
+  .pos-card.state-buy-pending{border-left:2px solid var(--acc-amber)}
+  .pos-card.state-waiting{border-left:2px solid var(--acc-cyan)}
+  .pos-card.state-closed{opacity:0.5;border-left:2px solid var(--text-muted)}
+  .pos-card.enter{animation:cardIn 240ms cubic-bezier(0.2,0.8,0.2,1)}
+  .pos-card.leaving{animation:cardOut 200ms ease forwards}
+  @keyframes cardIn{from{transform:translateY(12px);opacity:0}to{transform:translateY(0);opacity:1}}
+  @keyframes cardOut{to{transform:translateX(-20px);opacity:0;max-height:0;margin:0;padding:0;border:0}}
+  /* 收起态：只显示一行头部 + 一行摘要 */
+  .pos-card.collapsed .pos-body,.pos-card.collapsed .pos-actions{display:none}
+  .pos-card.collapsed .pos-head{border-bottom:none;padding:8px 12px;cursor:pointer}
+  .pos-card .pos-head{cursor:pointer}
+  .pos-chevron{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-muted);margin-right:8px;transition:transform 200ms ease;display:inline-block;width:10px}
+  .pos-card.collapsed .pos-chevron{transform:rotate(0deg)}
+  .pos-card:not(.collapsed) .pos-chevron{transform:rotate(90deg)}
+  .pos-summary{display:none;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-secondary);gap:10px;align-items:center;flex-wrap:wrap;padding:0 12px 8px 30px;border-top:1px dashed var(--border-hair);padding-top:6px;margin-top:0}
+  .pos-card.collapsed .pos-summary{display:flex}
+  .pos-summary .item{display:flex;gap:3px;align-items:baseline}
+  .pos-summary .item .k{font-size:8px;color:var(--text-muted);letter-spacing:0.08em;text-transform:uppercase}
+  .pos-summary .item .v{color:var(--text-primary)}
+  .pos-summary .item .v.mint{color:var(--acc-mint)}
+  .pos-summary .item .v.rose{color:var(--acc-rose)}
+  .pos-summary .sep{color:var(--border-hair)}
+  .pos-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px 8px;border-bottom:1px solid var(--border-hair)}
+  .pos-head-left{display:flex;align-items:center;min-width:0;flex:1}
+  .pos-label{font-family:'IBM Plex Sans',sans-serif;font-size:12px;font-weight:600;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pos-label .sub{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-muted);font-weight:400;margin-left:4px}
+  .pos-state{display:flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:0.08em;flex-shrink:0}
+  .state-dot{width:6px;height:6px;border-radius:50%}
+  .state-holding-with-sell .state-dot{background:var(--acc-mint);box-shadow:0 0 6px var(--acc-mint)}
+  .state-holding-with-sell .pos-state{color:var(--acc-mint)}
+  .state-holding-no-sell .state-dot{background:var(--acc-rose);box-shadow:0 0 6px var(--acc-rose);animation:pulse 1.6s infinite}
+  .state-holding-no-sell .pos-state{color:var(--acc-rose)}
+  .state-buy-pending .state-dot{background:var(--acc-amber);box-shadow:0 0 6px var(--acc-amber);animation:pulse 1.6s infinite}
+  .state-buy-pending .pos-state{color:var(--acc-amber)}
+  .state-waiting .state-dot{background:var(--acc-cyan);box-shadow:0 0 6px var(--acc-cyan)}
+  .state-waiting .pos-state{color:var(--acc-cyan)}
+  .state-closed .state-dot{background:var(--text-muted)}
+  .state-closed .pos-state{color:var(--text-muted)}
+  .pos-cycle{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--text-muted);margin-left:8px}
+  .pos-body{padding:10px 12px}
+  .pos-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-family:'JetBrains Mono',monospace;font-size:11px;margin-bottom:6px}
+  .pos-row:last-child{margin-bottom:0}
+  .pos-field{display:flex;flex-direction:column;gap:2px}
+  .pos-field .k{font-size:9px;color:var(--text-muted);letter-spacing:0.08em;text-transform:uppercase}
+  .pos-field .v{color:var(--text-primary);font-weight:500}
+  .pos-field .v.mint{color:var(--acc-mint)}
+  .pos-field .v.rose{color:var(--acc-rose)}
+  .pos-field .v.amber{color:var(--acc-amber)}
+  .pos-triggers{background:var(--bg-deep);border:1px solid var(--border-hair);border-radius:2px;padding:8px 10px;margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:8px;font-family:'JetBrains Mono',monospace;font-size:10px}
+  .trig{display:flex;flex-direction:column;gap:2px}
+  .trig .k{color:var(--text-muted);font-size:9px;letter-spacing:0.08em}
+  .trig .v{color:var(--text-primary)}
+  .trig.tp .v{color:var(--acc-mint)}
+  .trig.sl .v{color:var(--acc-rose)}
+  .pos-actions{display:flex;gap:4px;padding:8px 12px;background:var(--bg-deep);border-top:1px solid var(--border-hair)}
+  .pos-actions .btn{flex:1;height:30px;font-size:11px;padding:0}
+  .pos-actions .btn.stop{color:var(--acc-amber)}
+  .pos-actions .btn.stop:hover{border-color:var(--acc-amber);box-shadow:var(--shadow-amber)}
+  .pos-actions .btn.close{color:var(--acc-rose)}
+  .pos-actions .btn.close:hover{border-color:var(--acc-rose);box-shadow:var(--shadow-rose)}
+  .pos-actions .btn.reopen{color:var(--acc-violet)}
+  .pos-actions .btn.reopen:hover{border-color:var(--acc-violet);box-shadow:var(--shadow-violet)}
+  .pos-actions .btn.delete{color:var(--text-secondary)}
+  .pos-actions .btn.delete:hover{color:var(--acc-rose);border-color:var(--acc-rose)}
+  .pos-actions .btn.disabled{opacity:0.25;cursor:not-allowed;pointer-events:none}
+  .empty-state{padding:24px 12px;text-align:center;color:var(--text-muted);font-family:'JetBrains Mono',monospace;font-size:11px}
+  .modal-overlay{position:fixed;inset:0;background:rgba(5,5,10,0.75);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:none;align-items:center;justify-content:center;z-index:100}
+  .modal-overlay.show{display:flex}
+  .modal{width:380px;background:var(--bg-surface);border:1px solid var(--border-glow);border-radius:2px;box-shadow:0 30px 80px rgba(0,0,0,0.7), 0 0 40px rgba(255,51,102,0.15);overflow:hidden;animation:slideUp 240ms cubic-bezier(0.2,0.8,0.2,1)}
+  .modal.violet{box-shadow:0 30px 80px rgba(0,0,0,0.7), 0 0 40px rgba(179,136,255,0.15)}
+  .modal.amber{box-shadow:0 30px 80px rgba(0,0,0,0.7), 0 0 40px rgba(255,170,0,0.15)}
+  @keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+  .modal-head{padding:14px 16px 10px;border-bottom:1px solid var(--border-hair);display:flex;align-items:center;justify-content:space-between}
+  .modal-title{font-family:'IBM Plex Sans',sans-serif;font-size:14px;font-weight:600;color:var(--acc-rose);display:flex;align-items:center;gap:8px}
+  .modal-title.violet{color:var(--acc-violet)}
+  .modal-title.amber{color:var(--acc-amber)}
+  .modal-title::before{content:"⚠";font-family:'JetBrains Mono',monospace;color:inherit}
+  .modal-close{color:var(--text-muted);cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:14px}
+  .modal-close:hover{color:var(--text-primary)}
+  .modal-body{padding:14px 16px}
+  .impact-list{background:var(--bg-deep);border:1px solid var(--border-hair);border-radius:2px;padding:10px 12px;margin-bottom:12px}
+  .impact-item{display:flex;align-items:flex-start;gap:8px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-primary);padding:4px 0}
+  .impact-item::before{content:"·";color:var(--acc-rose);font-weight:700;flex-shrink:0}
+  .impact-item.violet::before{color:var(--acc-violet)}
+  .impact-item.amber::before{color:var(--acc-amber)}
+  .impact-item .num{color:var(--acc-amber);font-weight:600}
+  .impact-item .num.mint{color:var(--acc-mint)}
+  .impact-item .num.rose{color:var(--acc-rose)}
+  .impact-warn{color:var(--acc-amber);font-family:'JetBrains Mono',monospace;font-size:10px;margin-top:8px;padding:6px 8px;background:rgba(255,170,0,0.06);border-left:2px solid var(--acc-amber)}
+  .modal-actions{display:flex;gap:8px;padding:0 16px 16px}
+  .modal-actions .btn{flex:1;height:36px}
+  .modal-actions .btn.cancel{color:var(--text-secondary)}
+  .modal-actions .btn.cancel:hover{border-color:var(--border-glow);background:var(--bg-raised)}
+  .modal-actions .btn.confirm{background:linear-gradient(180deg, rgba(255,51,102,0.18) 0%, rgba(255,51,102,0.06) 100%);border-color:var(--acc-rose);color:var(--acc-rose)}
+  .modal-actions .btn.confirm:hover{box-shadow:var(--shadow-rose)}
+  .modal-actions .btn.confirm.violet{background:linear-gradient(180deg, rgba(179,136,255,0.18) 0%, rgba(179,136,255,0.06) 100%);border-color:var(--acc-violet);color:var(--acc-violet)}
+  .modal-actions .btn.confirm.violet:hover{box-shadow:var(--shadow-violet)}
+  .modal-actions .btn.confirm.amber{background:linear-gradient(180deg, rgba(255,170,0,0.18) 0%, rgba(255,170,0,0.06) 100%);border-color:var(--acc-amber);color:var(--acc-amber)}
+  .modal-actions .btn.confirm.amber:hover{box-shadow:var(--shadow-amber)}
+  .demo-label{position:fixed;top:12px;left:12px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-muted);letter-spacing:0.1em;z-index:10}
+  .demo-label .tag{color:var(--acc-amber);background:rgba(255,170,0,0.08);padding:2px 8px;border:1px solid rgba(255,170,0,0.25);border-radius:2px;margin-right:6px}
+  .demo-panel{position:fixed;bottom:0;left:0;right:0;background:var(--bg-surface);border-top:1px solid var(--border-glow);padding:12px 16px;z-index:50;font-family:'JetBrains Mono',monospace;font-size:11px;transform:translateY(calc(100% - 36px));transition:transform 240ms ease}
+  .demo-panel.open{transform:translateY(0)}
+  .demo-panel-toggle{position:absolute;top:-1px;left:50%;transform:translate(-50%,-100%);background:var(--bg-surface);border:1px solid var(--border-glow);border-bottom:none;padding:4px 16px;color:var(--acc-amber);font-family:'JetBrains Mono',monospace;font-size:10px;cursor:pointer;letter-spacing:0.1em;border-radius:2px 2px 0 0}
+  .demo-panel-toggle:hover{color:var(--acc-mint);border-color:var(--acc-mint)}
+  .demo-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:8px}
+  .demo-cell{display:flex;flex-direction:column;gap:4px}
+  .demo-cell label{color:var(--text-muted);font-size:9px;letter-spacing:0.1em;text-transform:uppercase}
+  .demo-cell select,.demo-cell button{background:var(--bg-deep);border:1px solid var(--border-hair);color:var(--text-primary);font-family:'JetBrains Mono',monospace;font-size:11px;padding:6px 8px;border-radius:2px;cursor:pointer}
+  .demo-cell select:focus,.demo-cell button:focus{outline:none;border-color:var(--acc-cyan)}
+  .demo-cell button{transition:all 180ms ease}
+  .demo-cell button:hover{border-color:var(--acc-cyan);color:var(--acc-cyan)}
+  .toast{position:fixed;top:80px;right:16px;background:var(--bg-surface);border:1px solid var(--border-glow);border-left:3px solid var(--acc-mint);padding:10px 14px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-primary);border-radius:2px;z-index:200;animation:toastIn 240ms ease;max-width:320px}
+  .toast.error{border-left-color:var(--acc-rose)}
+  .toast.warn{border-left-color:var(--acc-amber)}
+  .toast.info{border-left-color:var(--acc-cyan)}
+  @keyframes toastIn{from{transform:translateX(20px);opacity:0}to{transform:translateX(0);opacity:1}}
+  .toast.leaving{animation:toastOut 200ms ease forwards}
+  @keyframes toastOut{to{transform:translateX(20px);opacity:0}}
+</style>
+</head>
+<body>
+
+<div class="demo-label"><span class="tag">DYNAMIC</span>POLY·DESK 侧边栏原型 · 全 Mock 交互</div>
+
+<div class="sidebar" id="sidebar">
+  <!-- 由 JS 渲染 -->
+</div>
+
+<!-- 弹窗容器 -->
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal" id="modal"></div>
+</div>
+
+<!-- Toast 容器 -->
+<div id="toast-container"></div>
+
+<!-- 演示控制面板 -->
+<div class="demo-panel" id="demo-panel">
+  <div class="demo-panel-toggle" id="demo-toggle">▲ 演示控制面板</div>
+  <div style="color:var(--acc-amber);font-size:10px;letter-spacing:0.1em;margin-bottom:6px">DEMO CONTROL · 模拟 FastAPI 数据源</div>
+  <div class="demo-grid">
+    <div class="demo-cell">
+      <label>切换 URL</label>
+      <select id="demo-url">
+        <option value="lpl-s13-finals">lpl-s13-finals (4方向)</option>
+        <option value="worlds-2026-groups">worlds-2026-groups (8方向)</option>
+        <option value="lec-summer-finals">lec-summer-finals (2方向)</option>
+      </select>
+    </div>
+    <div class="demo-cell">
+      <label>注入买单成交</label>
+      <button id="demo-fill">让首张买单成交</button>
+    </div>
+    <div class="demo-cell">
+      <label>重置数据</label>
+      <button id="demo-reset">恢复初始 Mock</button>
+    </div>
+    <div class="demo-cell">
+      <label>连接状态</label>
+      <button id="demo-conn">切换连接</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ==========================================================================
+// MOCK 数据：3 个 URL 场景 + 5 条初始持仓
+// 字段对齐 runtime.py snapshot() / market_setup._normalize_market / config.StrategyConfig
+// ==========================================================================
+
+const STATE_ENUM = {
+  WAITING:         { key:'state-waiting',           label:'待入场',            color:'cyan'   },
+  BUY_PENDING:     { key:'state-buy-pending',       label:'已挂买单·待成交',    color:'amber'  },
+  HOLDING_NO_SELL: { key:'state-holding-no-sell',   label:'持仓·待挂卖单',      color:'rose'   },
+  HOLDING_WITH_SELL:{key:'state-holding-with-sell', label:'持仓·已挂卖单',      color:'mint'   },
+  CLOSED:          { key:'state-closed',            label:'已平仓',            color:'muted'  },
+};
+
+const URL_SCENARIOS = {
+  'lpl-s13-finals': {
+    url:'polymarket.com/event/lpl-s13-finals',
+    event:'LPL S13 决赛',
+    markets:[{
+      question:'LPL S13 决赛',
+      outcomes:['Team WE','Team IG','Team JDG','Team RA'],
+      clob_token_ids:['tok_we','tok_ig','tok_jdg','tok_ra'],
+      tick_size:0.01,
+    }],
+  },
+  'worlds-2026-groups': {
+    url:'polymarket.com/event/worlds-2026-groups',
+    event:'Worlds 2026 小组赛',
+    markets:[{
+      question:'Worlds 2026 小组赛 A组',
+      outcomes:['T1','GEN','DK','JDG','BLG','WBG','FNC','C9'],
+      clob_token_ids:['tok_t1','tok_gen','tok_dk','tok_jdg2','tok_blg','tok_wbg','tok_fnc','tok_c9'],
+      tick_size:0.01,
+    }],
+  },
+  'lec-summer-finals': {
+    url:'polymarket.com/event/lec-summer-finals',
+    event:'LEC 夏季赛决赛',
+    markets:[{
+      question:'LEC 夏季赛决赛',
+      outcomes:['G2','Fnatic'],
+      clob_token_ids:['tok_g2','tok_fnc2'],
+      tick_size:0.01,
+    }],
+  },
+};
+
+// 实时盘口 mock（按 token_id 索引）
+const MOCK_BOOKS = {
+  'tok_we':{bid:0.48,ask:0.50},'tok_ig':{bid:0.55,ask:0.57},
+  'tok_jdg':{bid:0.60,ask:0.62},'tok_ra':{bid:0.34,ask:0.36},
+  'tok_t1':{bid:0.42,ask:0.44},'tok_gen':{bid:0.40,ask:0.42},
+  'tok_dk':{bid:0.15,ask:0.17},'tok_jdg2':{bid:0.25,ask:0.27},
+  'tok_blg':{bid:0.30,ask:0.32},'tok_wbg':{bid:0.20,ask:0.22},
+  'tok_fnc':{bid:0.10,ask:0.12},'tok_c9':{bid:0.08,ask:0.10},
+  'tok_g2':{bid:0.65,ask:0.67},'tok_fnc2':{bid:0.35,ask:0.37},
+  'tok_edg':{bid:0.20,ask:0.22},
+};
+
+function initialPositions(){
+  return [
+    { id:'p1', label:'LPL S13 决赛 [Team WE]',  token_id:'tok_we',  market_q:'LPL S13 决赛',  outcome:'Team WE',
+      state:'HOLDING_WITH_SELL', cycle:42, entry_price:0.42, exit_price:0.55, share_amount:100,
+      take_profit_pct:0.10, stop_loss_pct:0.05, position_size:100, avg_price:0.4200, closed:false },
+    { id:'p2', label:'LPL S13 半决赛 [Team IG]', token_id:'tok_ig',  market_q:'LPL S13 半决赛', outcome:'Team IG',
+      state:'BUY_PENDING', cycle:7, entry_price:0.55, exit_price:0.65, share_amount:50,
+      take_profit_pct:0.15, stop_loss_pct:0.08, position_size:0, avg_price:0, closed:false },
+    { id:'p3', label:'LPL S13 半决赛 [Team RA]', token_id:'tok_ra',  market_q:'LPL S13 半决赛', outcome:'Team RA',
+      state:'HOLDING_NO_SELL', cycle:23, entry_price:0.30, exit_price:0.40, share_amount:200,
+      take_profit_pct:0.10, stop_loss_pct:0.05, position_size:200, avg_price:0.3010, closed:false },
+    { id:'p4', label:'LPL S13 决赛 [Team JDG]',  token_id:'tok_jdg', market_q:'LPL S13 决赛',  outcome:'Team JDG',
+      state:'WAITING', cycle:3, entry_price:0.60, exit_price:0.70, share_amount:80,
+      take_profit_pct:null, stop_loss_pct:null, position_size:0, avg_price:0, closed:false },
+    { id:'p5', label:'LPL S13 季军赛 [Team EDG]', token_id:'tok_edg', market_q:'LPL S13 季军赛', outcome:'Team EDG',
+      state:'CLOSED', cycle:156, entry_price:0.45, exit_price:0.50, share_amount:0,
+      take_profit_pct:0.10, stop_loss_pct:0.05, position_size:0, avg_price:0, closed:true, realized_pnl:+5.00 },
+  ];
+}
+
+// ==========================================================================
+// 全局状态
+// ==========================================================================
+const state = {
+  connection:{ online:true, latency:12 },
+  currentUrlKey:'worlds-2026-groups',
+  positions:[],
+  selectedDirection:null,    // {market_q, outcome, token_id} 或 null
+  expandedMore:false,
+  reopenSource:null,         // 持仓 id 或 null
+  expandedPositions:{},      // {posId: true} 展开的卡片；未列入=收起（默认全部收起）
+  formValues:{ entry_price:0.50, exit_price:0.55, share_amount:10, take_profit_pct:0.10, stop_loss_pct:0.05 },
+  globalConfig:{
+    default_entry_price:0.50, default_exit_price:0.55, default_share_amount:10,
+    default_take_profit_pct:0.10, default_stop_loss_pct:0.05, conditional_entry:true,
+  },
+  cycleCounter:42,
+};
+
+function resetState(){
+  state.connection = { online:true, latency:12 };
+  state.currentUrlKey = 'worlds-2026-groups';
+  state.positions = initialPositions();
+  state.selectedDirection = null;
+  state.expandedMore = false;
+  state.reopenSource = null;
+  state.expandedPositions = {};   // 默认全部收起
+  state.formValues = { entry_price:0.50, exit_price:0.55, share_amount:10, take_profit_pct:0.10, stop_loss_pct:0.05 };
+  state.cycleCounter = 42;
+}
+
+// ==========================================================================
+// 辅助函数
+// ==========================================================================
+function $(sel){ return document.querySelector(sel); }
+function getScenario(){ return URL_SCENARIOS[state.currentUrlKey]; }
+function getBook(token_id){ return MOCK_BOOKS[token_id] || { bid:0.50, ask:0.52 }; }
+
+function findPositionByToken(token_id){ return state.positions.find(p => p.token_id === token_id); }
+
+// 按 state 计算可用 actions
+function actionsFor(state_key){
+  switch(state_key){
+    case 'WAITING':           return { stop:true,  close:false, reopen:true,  delete:true  };
+    case 'BUY_PENDING':       return { stop:true,  close:false, reopen:true,  delete:true  };
+    case 'HOLDING_NO_SELL':   return { stop:false, close:true,  reopen:true,  delete:false };
+    case 'HOLDING_WITH_SELL': return { stop:true,  close:true,  reopen:true,  delete:false };
+    case 'CLOSED':            return { stop:false, close:false, reopen:true,  delete:true  };
+    default:                  return { stop:false, close:false, reopen:false, delete:false };
+  }
+}
+
+function tpTrigger(avg, tp){ return (tp != null && avg > 0) ? avg * (1 + tp) : null; }
+function slTrigger(avg, sl){ return (sl != null && avg > 0) ? avg * (1 - sl) : null; }
+
+function fmtPct(p){ return p == null ? '—' : (p*100).toFixed(1) + '%'; }
+function fmtPrice(p){ return p == null ? '—' : p.toFixed(4); }
+function fmtNum(n, d=2){ return Number(n).toFixed(d); }
+
+// 聚合状态
+function computeAggregate(){
+  const holding = state.positions.filter(p => p.position_size > 0 && !p.closed);
+  const total   = holding.reduce((s,p)=> s + p.position_size * p.avg_price, 0);
+  const pnl     = holding.reduce((s,p)=>{
+    const book = getBook(p.token_id);
+    return s + p.position_size * (book.bid - p.avg_price);
+  }, 0);
+  const pnlPct = total > 0 ? pnl / total : 0;
+  return {
+    positionsCount: holding.length,
+    totalCount: state.positions.length,
+    totalUSDC: total,
+    pnl, pnlPct,
+  };
+}
+
+// ==========================================================================
+// 渲染：状态区
+// ==========================================================================
+function renderTopbar(){
+  const c = state.connection;
+  const cls = c.online ? 'conn' : 'conn offline';
+  const txt = c.online ? `FASTAPI · ${c.latency}ms` : 'OFFLINE';
+  return `
+    <div class="topbar">
+      <div class="brand">poly<span class="dot">·</span>desk</div>
+      <div class="topbar-right">
+        <div class="${cls}"><span class="conn-dot"></span><span>${txt}</span></div>
+        <div class="icon-btn" title="设置">⚙</div>
+      </div>
+    </div>`;
+}
+
+function renderStatus(){
+  const a = computeAggregate();
+  const pnlClass = a.pnl >= 0 ? 'mint' : 'rose';
+  const pnlStr   = (a.pnl >= 0 ? '+' : '') + a.pnl.toFixed(2);
+  return `
+    <div class="section" style="padding:8px 14px">
+      <div class="status-grid">
+        <div class="stat">
+          <span class="stat-label">POS</span>
+          <span class="stat-value" id="stat-pos">${a.positionsCount}<span class="stat-unit">/${a.totalCount}</span></span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">CAPITAL</span>
+          <span class="stat-value" id="stat-total">${a.totalUSDC.toFixed(2)}<span class="stat-unit">U</span></span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">PNL</span>
+          <span class="stat-value ${pnlClass}" id="stat-pnl">${pnlStr}<span class="stat-unit">(${fmtPct(a.pnlPct)})</span></span>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderGlobalCmd(){
+  return `
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title">GLOBAL COMMAND</div>
+        <div class="section-meta">影响汇总 · 二次确认</div>
+      </div>
+      <div class="global-cmd">
+        <button class="gbtn stop" data-action="global-stop">全部停止</button>
+        <button class="gbtn close" data-action="global-close">全部平仓</button>
+        <button class="gbtn delete" data-action="global-delete">全部删除</button>
+      </div>
+    </div>`;
+}
+
+// ==========================================================================
+// 渲染：下单区
+// ==========================================================================
+function renderOrderArea(){
+  const sc = getScenario();
+  // 把 markets 内所有 outcomes 展平成 direction 列表
+  const dirs = [];
+  sc.markets.forEach(m => {
+    m.outcomes.forEach((name, i) => {
+      const token_id = m.clob_token_ids[i];
+      const book = getBook(token_id);
+      const pos = findPositionByToken(token_id);
+      dirs.push({
+        market_q: m.question,
+        outcome: name,
+        token_id,
+        bid: book.bid,
+        ask: book.ask,
+        hasPosition: pos && pos.position_size > 0 && !pos.closed,
+        hasOrder: pos && (pos.state === 'BUY_PENDING' || pos.state === 'HOLDING_WITH_SELL'),
+      });
+    });
+  });
+  // 按 ask 升序
+  dirs.sort((a,b)=> a.ask - b.ask);
+  const TOP = 5;
+  const top = dirs.slice(0, TOP);
+  const rest = dirs.slice(TOP);
+
+  const showSelected = state.selectedDirection;
+  const showReopenBanner = state.reopenSource != null;
+
+  return `
+    <div class="section order-section">
+      <div class="order-l1">
+        <div class="section-head">
+          <div class="section-title">ORDER · L1 DIRECTIONS</div>
+          <div class="section-meta">当前 URL 解析 · top ${TOP}</div>
+        </div>
+        <div class="url-bar">
+          <span class="url-tag">URL</span>
+          <span class="url-text">${sc.url}</span>
+          <span class="url-switch" id="url-switch" title="切换 URL">⇄</span>
+        </div>
+        <div class="direction-list">
+          ${top.map(renderDirection).join('')}
+          ${rest.length > 0 ? `<div class="more-row ${state.expandedMore?'expanded':''}" id="more-row">${
+            state.expandedMore ? '▲ 收起' : `▼ 展开更多 (${rest.length})`
+          }</div>` : ''}
+          ${state.expandedMore && rest.length > 0 ? rest.map(renderDirection).join('') : ''}
+        </div>
+      </div>
+      <div class="order-l2 ${showSelected?'':'collapsed'} ${showReopenBanner?'l2-highlight':''}" id="order-l2">
+        ${renderOrderForm()}
+      </div>
+    </div>`;
+}
+
+function renderDirection(d){
+  const cls = ['direction'];
+  if (state.selectedDirection && state.selectedDirection.token_id === d.token_id) cls.push('active');
+  if (d.hasPosition) cls.push('has-position');
+  else if (d.hasOrder) cls.push('has-order');
+  const badge = d.hasPosition ? '<span class="badge pos">持仓</span>'
+              : d.hasOrder    ? '<span class="badge ord">挂单</span>'
+              : '';
+  return `
+    <div class="${cls.join(' ')}" data-action="select-direction" data-token="${d.token_id}" data-outcome="${d.outcome}" data-market="${d.market_q}">
+      <div class="dir-row">
+        <div class="dir-name">${d.outcome} ${badge}</div>
+        <div class="dir-prices">
+          <span><span class="label">BID</span><span class="bid">${d.bid.toFixed(2)}</span></span>
+          <span><span class="label">ASK</span><span class="ask">${d.ask.toFixed(2)}</span></span>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderOrderForm(){
+  if (!state.selectedDirection) return '';
+  const d = state.selectedDirection;
+  const v = state.formValues;
+  const est = (v.entry_price || 0) * (v.share_amount || 0);
+  const showReopen = state.reopenSource != null;
+  const sourceLabel = showReopen ? (state.positions.find(p=>p.id===state.reopenSource)?.label || '') : '';
+
+  return `
+    <div class="l2-head">
+      <div class="l2-title">${d.market_q} <span class="arrow">›</span> ${d.outcome}</div>
+      <div class="l2-est">预估投入 <span class="val">${est.toFixed(2)} USDC</span></div>
+    </div>
+    ${showReopen ? `
+      <div class="reopen-banner">
+        <span>⚠ 来自持仓 [${sourceLabel}] 的重新开单参数已预填</span>
+        <span class="back" id="reopen-back">← 返回当前 URL 下单区</span>
+      </div>` : ''}
+    <div class="form-grid">
+      <div class="field">
+        <div class="field-label">买入价 <span class="req">ENTRY · 必填</span></div>
+        <div class="field-suffix">
+          <input class="field-input" id="f-entry" type="number" step="0.01" value="${v.entry_price}" />
+          <span class="sfx">USDC</span>
+        </div>
+      </div>
+      <div class="field">
+        <div class="field-label">卖出价 <span class="req">EXIT · 必填</span></div>
+        <div class="field-suffix">
+          <input class="field-input" id="f-exit" type="number" step="0.01" value="${v.exit_price}" />
+          <span class="sfx">USDC</span>
+        </div>
+      </div>
+      <div class="field full">
+        <div class="field-label">数量 <span class="opt">SHARE_AMOUNT</span></div>
+        <div class="field-suffix">
+          <input class="field-input" id="f-size" type="number" step="1" value="${v.share_amount}" />
+          <span class="sfx">SHARES</span>
+        </div>
+      </div>
+      <div class="field">
+        <div class="field-label">止盈 <span class="opt">TP · 可空</span></div>
+        <div class="field-suffix">
+          <input class="field-input" id="f-tp" type="number" step="0.01" value="${v.take_profit_pct ?? ''}" placeholder="未设置" />
+          <span class="sfx">+${v.take_profit_pct ? (v.take_profit_pct*100).toFixed(0) : '0'}%</span>
+        </div>
+      </div>
+      <div class="field">
+        <div class="field-label">止损 <span class="opt">SL · 可空</span></div>
+        <div class="field-suffix">
+          <input class="field-input" id="f-sl" type="number" step="0.01" value="${v.stop_loss_pct ?? ''}" placeholder="未设置" />
+          <span class="sfx">-${v.stop_loss_pct ? (v.stop_loss_pct*100).toFixed(0) : '0'}%</span>
+        </div>
+      </div>
+    </div>
+    <div class="l2-actions">
+      <button class="btn primary" data-action="place-order">▶ 下单 · BUY ${v.share_amount} @ ${v.entry_price}</button>
+      <button class="btn ghost" data-action="reset-form">重置</button>
+    </div>`;
+}
+
+// ==========================================================================
+// 渲染：持仓区
+// ==========================================================================
+function renderPositions(){
+  if (state.positions.length === 0){
+    return `
+      <div class="section">
+        <div class="section-head">
+          <div class="section-title">POSITIONS</div>
+          <div class="section-meta">0 strategies</div>
+        </div>
+        <div class="empty-state">暂无策略记录<br/>从下单区添加新策略</div>
+      </div>`;
+  }
+  const expandedCount = state.positions.filter(p => state.expandedPositions[p.id]).length;
+  const allExpanded = expandedCount === state.positions.length;
+  const toggleLabel = allExpanded ? '▼ 全部收起' : '▶ 全部展开';
+  return `
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title">POSITIONS</div>
+        <div class="section-meta" id="positions-section-meta">
+          ${state.positions.length} strategies · cycle ${state.cycleCounter}
+          <span class="toggle-all" id="toggle-all-positions">${toggleLabel}</span>
+        </div>
+      </div>
+      <div class="positions">
+        ${state.positions.map(renderPositionCard).join('')}
+      </div>
+    </div>`;
+}
+
+function renderPositionCard(p){
+  const s = STATE_ENUM[p.state];
+  const book = getBook(p.token_id);
+  const actions = actionsFor(p.state);
+  const tpTrig = tpTrigger(p.avg_price, p.take_profit_pct);
+  const slTrig = slTrigger(p.avg_price, p.stop_loss_pct);
+  const holding = p.position_size > 0 && !p.closed;
+  const pnl = holding ? p.position_size * (book.bid - p.avg_price) : 0;
+  const pnlPct = holding && p.avg_price > 0 ? (book.bid - p.avg_price) / p.avg_price : 0;
+  const isExpanded = !!state.expandedPositions[p.id];
+
+  let bodyExtra = '';
+  if (p.state === 'CLOSED'){
+    bodyExtra = `
+      <div class="pos-row">
+        <div class="pos-field"><span class="k">REALIZED</span><span class="v mint">+${(p.realized_pnl||0).toFixed(2)}</span></div>
+        <div class="pos-field"><span class="k">TP/SL</span><span class="v">${fmtPct(p.take_profit_pct)} / ${fmtPct(p.stop_loss_pct)}</span></div>
+        <div class="pos-field"><span class="k">SIZE</span><span class="v">0</span></div>
+      </div>`;
+  } else {
+    bodyExtra = `
+      <div class="pos-row">
+        <div class="pos-field"><span class="k">AVG</span><span class="v">${p.avg_price > 0 ? fmtPrice(p.avg_price) : '—'}</span></div>
+        <div class="pos-field"><span class="k">BID</span><span class="v mint">${book.bid.toFixed(4)}</span></div>
+        <div class="pos-field"><span class="k">PNL</span><span class="v ${pnl>=0?'mint':'rose'}">${pnl>=0?'+':''}${pnl.toFixed(2)} (${fmtPct(pnlPct)})</span></div>
+      </div>
+      <div class="pos-triggers">
+        <div class="trig tp">
+          <span class="k">TP TRIGGER</span>
+          <span class="v">${tpTrig != null ? fmtPrice(tpTrig) + ' (' + fmtPct(p.take_profit_pct) + ')' : (p.take_profit_pct != null ? '成交后激活' : '未配置')}</span>
+        </div>
+        <div class="trig sl">
+          <span class="k">SL TRIGGER</span>
+          <span class="v">${slTrig != null ? fmtPrice(slTrig) + ' (' + fmtPct(p.stop_loss_pct) + ')' : (p.stop_loss_pct != null ? '成交后激活' : '未配置')}</span>
+        </div>
+      </div>`;
+  }
+
+  // 收起态摘要行（仅 collapsed 时显示）
+  let summaryItems = '';
+  if (p.state === 'CLOSED'){
+    summaryItems = `
+      <div class="item"><span class="k">E</span><span class="v">${p.entry_price.toFixed(2)}</span></div>
+      <span class="sep">·</span>
+      <div class="item"><span class="k">X</span><span class="v">${p.exit_price.toFixed(2)}</span></div>
+      <span class="sep">·</span>
+      <div class="item"><span class="k">REAL</span><span class="v mint">+${(p.realized_pnl||0).toFixed(2)}</span></div>`;
+  } else if (holding){
+    summaryItems = `
+      <div class="item"><span class="k">E</span><span class="v">${p.entry_price.toFixed(2)}</span></div>
+      <span class="sep">·</span>
+      <div class="item"><span class="k">X</span><span class="v">${p.exit_price.toFixed(2)}</span></div>
+      <span class="sep">·</span>
+      <div class="item"><span class="k">SZ</span><span class="v">${p.position_size}</span></div>
+      <span class="sep">·</span>
+      <div class="item"><span class="k">AVG</span><span class="v">${fmtPrice(p.avg_price)}</span></div>
+      <span class="sep">·</span>
+      <div class="item"><span class="k">PNL</span><span class="v ${pnl>=0?'mint':'rose'}">${pnl>=0?'+':''}${pnl.toFixed(2)} (${fmtPct(pnlPct)})</span></div>`;
+  } else {
+    summaryItems = `
+      <div class="item"><span class="k">E</span><span class="v">${p.entry_price.toFixed(2)}</span></div>
+      <span class="sep">·</span>
+      <div class="item"><span class="k">X</span><span class="v">${p.exit_price.toFixed(2)}</span></div>
+      <span class="sep">·</span>
+      <div class="item"><span class="k">SZ</span><span class="v">${p.share_amount}</span></div>
+      <div class="item"><span class="k">TP/SL</span><span class="v">${fmtPct(p.take_profit_pct)} / ${fmtPct(p.stop_loss_pct)}</span></div>`;
+  }
+
+  return `
+    <div class="pos-card ${s.key} ${isExpanded?'':'collapsed'}" data-pos-id="${p.id}">
+      <div class="pos-head" data-action="pos-toggle" data-id="${p.id}">
+        <div class="pos-head-left">
+          <span class="pos-chevron">▶</span>
+          <span class="pos-label">${p.outcome} <span class="sub">${p.market_q}</span></span>
+        </div>
+        <div>
+          <span class="pos-state"><span class="state-dot"></span>${s.label}</span>
+          <span class="pos-cycle">cyc ${p.cycle}</span>
+        </div>
+      </div>
+      <div class="pos-summary">${summaryItems}</div>
+      <div class="pos-body">
+        <div class="pos-row">
+          <div class="pos-field"><span class="k">ENTRY</span><span class="v">${p.entry_price.toFixed(2)}</span></div>
+          <div class="pos-field"><span class="k">EXIT</span><span class="v">${p.exit_price.toFixed(2)}</span></div>
+          <div class="pos-field"><span class="k">SIZE</span><span class="v">${p.share_amount}</span></div>
+        </div>
+        ${bodyExtra}
+      </div>
+      <div class="pos-actions">
+        <button class="btn stop ${actions.stop?'':'disabled'}" data-action="pos-stop" data-id="${p.id}">${p.state==='BUY_PENDING'?'撤单':(p.state==='HOLDING_WITH_SELL'?'撤卖单':'停止')}</button>
+        <button class="btn close ${actions.close?'':'disabled'}" data-action="pos-close" data-id="${p.id}">平仓</button>
+        <button class="btn reopen ${actions.reopen?'':'disabled'}" data-action="pos-reopen" data-id="${p.id}">重新开单</button>
+        <button class="btn delete ${actions.delete?'':'disabled'}" data-action="pos-delete" data-id="${p.id}">删除</button>
+      </div>
+    </div>`;
+}
+
+// ==========================================================================
+// 主渲染
+// ==========================================================================
+let prevSnapshot = '';
+function render(){
+  const sidebar = $('#sidebar');
+  const html =
+    renderTopbar() +
+    renderStatus() +
+    renderGlobalCmd() +
+    renderOrderArea() +
+    renderPositions();
+  sidebar.innerHTML = html;
+  bindEvents();
+}
+
+// ==========================================================================
+// 事件绑定（每次 render 后调用）
+// ==========================================================================
+function bindEvents(){
+  // 全局指令
+  document.querySelectorAll('[data-action="global-stop"]').forEach(b=> b.onclick = ()=> openGlobalModal('stop'));
+  document.querySelectorAll('[data-action="global-close"]').forEach(b=> b.onclick = ()=> openGlobalModal('close'));
+  document.querySelectorAll('[data-action="global-delete"]').forEach(b=> b.onclick = ()=> openGlobalModal('delete'));
+
+  // 选方向
+  document.querySelectorAll('[data-action="select-direction"]').forEach(b=>{
+    b.onclick = ()=>{
+      const token = b.dataset.token;
+      const outcome = b.dataset.outcome;
+      const market = b.dataset.market;
+      // 切到该方向的 Layer 2；预填默认或现有持仓参数
+      const existing = findPositionByToken(token);
+      state.selectedDirection = { market_q: market, outcome, token_id: token };
+      state.reopenSource = null;
+      if (existing){
+        state.formValues = {
+          entry_price: existing.entry_price,
+          exit_price: existing.exit_price,
+          share_amount: existing.share_amount,
+          take_profit_pct: existing.take_profit_pct,
+          stop_loss_pct: existing.stop_loss_pct,
+        };
+      } else {
+        state.formValues = { ...state.globalConfig.default_take_profit_pct ? {
+          entry_price: state.globalConfig.default_entry_price,
+          exit_price: state.globalConfig.default_exit_price,
+          share_amount: state.globalConfig.default_share_amount,
+          take_profit_pct: state.globalConfig.default_take_profit_pct,
+          stop_loss_pct: state.globalConfig.default_stop_loss_pct,
+        } : {} };
+      }
+      render();
+    };
+  });
+
+  // 展开更多
+  const moreRow = document.getElementById('more-row');
+  if (moreRow){
+    moreRow.onclick = ()=>{ state.expandedMore = !state.expandedMore; render(); };
+  }
+
+  // URL 切换
+  const urlSwitch = document.getElementById('url-switch');
+  if (urlSwitch){
+    urlSwitch.onclick = ()=>{
+      const keys = Object.keys(URL_SCENARIOS);
+      const idx = keys.indexOf(state.currentUrlKey);
+      state.currentUrlKey = keys[(idx + 1) % keys.length];
+      state.selectedDirection = null;
+      state.reopenSource = null;
+      toast('info', `切换 URL → ${getScenario().url}`);
+      render();
+    };
+  }
+
+  // 返回当前 URL 下单区
+  const reopenBack = document.getElementById('reopen-back');
+  if (reopenBack){
+    reopenBack.onclick = ()=>{
+      state.reopenSource = null;
+      state.selectedDirection = null;
+      render();
+      toast('info', '已返回当前 URL 下单区');
+    };
+  }
+
+  // 表单输入
+  bindFormInput('f-entry', 'entry_price');
+  bindFormInput('f-exit',  'exit_price');
+  bindFormInput('f-size',  'share_amount');
+  bindFormInput('f-tp',    'take_profit_pct', true);
+  bindFormInput('f-sl',    'stop_loss_pct', true);
+
+  // 下单
+  const placeBtn = document.querySelector('[data-action="place-order"]');
+  if (placeBtn) placeBtn.onclick = placeOrder;
+  const resetBtn = document.querySelector('[data-action="reset-form"]');
+  if (resetBtn) resetBtn.onclick = resetForm;
+
+  // 持仓卡片 actions
+  document.querySelectorAll('[data-action="pos-stop"]').forEach(b=> b.onclick = ()=> posStop(b.dataset.id));
+  document.querySelectorAll('[data-action="pos-close"]').forEach(b=> b.onclick = ()=> posClose(b.dataset.id));
+  document.querySelectorAll('[data-action="pos-reopen"]').forEach(b=> b.onclick = ()=> posReopen(b.dataset.id));
+  document.querySelectorAll('[data-action="pos-delete"]').forEach(b=> b.onclick = ()=> posDelete(b.dataset.id));
+
+  // 持仓卡片收起/展开
+  document.querySelectorAll('[data-action="pos-toggle"]').forEach(b=>{
+    b.onclick = (e)=>{
+      e.stopPropagation();
+      const id = b.dataset.id;
+      if (state.expandedPositions[id]) delete state.expandedPositions[id];
+      else state.expandedPositions[id] = true;
+      render();
+    };
+  });
+
+  // 全部展开/全部收起
+  const toggleAll = document.getElementById('toggle-all-positions');
+  if (toggleAll){
+    toggleAll.onclick = ()=>{
+      const allExpanded = state.positions.every(p => state.expandedPositions[p.id]);
+      state.expandedPositions = {};
+      if (!allExpanded){
+        state.positions.forEach(p=>{ state.expandedPositions[p.id] = true; });
+      }
+      render();
+    };
+  }
+}
+
+function bindFormInput(id, key, nullable=false){
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.oninput = ()=>{
+    const raw = el.value;
+    if (raw === '' && nullable){
+      state.formValues[key] = null;
+    } else {
+      const v = parseFloat(raw);
+      if (!isNaN(v)) state.formValues[key] = v;
+    }
+    // 仅刷新预估投入和按钮文字（不重渲染整个表单，避免失焦）
+    updateFormDerived();
+  };
+}
+
+function updateFormDerived(){
+  const v = state.formValues;
+  const est = (v.entry_price || 0) * (v.share_amount || 0);
+  const estEl = document.querySelector('.l2-est .val');
+  if (estEl) estEl.textContent = est.toFixed(2) + ' USDC';
+  const btn = document.querySelector('[data-action="place-order"]');
+  if (btn) btn.textContent = `▶ 下单 · BUY ${v.share_amount} @ ${v.entry_price}`;
+}
+
+// ==========================================================================
+// 业务动作
+// ==========================================================================
+
+// 同步表单 → state.formValues
+function syncFormFromInputs(){
+  ['f-entry','f-exit','f-size','f-tp','f-sl'].forEach(id=>{
+    const el = document.getElementById(id);
+    if (!el) return;
+    const map = {'f-entry':'entry_price','f-exit':'exit_price','f-size':'share_amount','f-tp':'take_profit_pct','f-sl':'stop_loss_pct'};
+    const key = map[id];
+    const raw = el.value;
+    state.formValues[key] = raw === '' ? null : parseFloat(raw);
+  });
+}
+
+function placeOrder(){
+  syncFormFromInputs();
+  const v = state.formValues;
+  if (!v.exit_price || v.exit_price <= 0){
+    toast('error', 'EXIT_PRICE 必填 — 强制约束');
+    const el = document.getElementById('f-exit');
+    if (el) el.classList.add('error');
+    return;
+  }
+  if (!v.entry_price || v.entry_price <= 0){
+    toast('error', 'ENTRY_PRICE 必填');
+    return;
+  }
+  if (!v.share_amount || v.share_amount <= 0){
+    toast('error', 'SHARE_AMOUNT 必填');
+    return;
+  }
+  const d = state.selectedDirection;
+  const newPos = {
+    id: 'p' + (Date.now()),
+    label: `${d.market_q} [${d.outcome}]`,
+    token_id: d.token_id,
+    market_q: d.market_q,
+    outcome: d.outcome,
+    state: 'BUY_PENDING',
+    cycle: 0,
+    entry_price: v.entry_price,
+    exit_price: v.exit_price,
+    share_amount: v.share_amount,
+    take_profit_pct: v.take_profit_pct,
+    stop_loss_pct: v.stop_loss_pct,
+    position_size: 0,
+    avg_price: 0,
+    closed: false,
+  };
+  state.positions.unshift(newPos);
+  state.reopenSource = null;
+  state.selectedDirection = null;
+  state.expandedPositions[newPos.id] = true;  // 新单自动展开
+  toast('mint', `挂单中 · BUY ${v.share_amount} @ ${v.entry_price} (${d.outcome})`);
+  render();
+  // 模拟自动 2 秒后挂保护卖单的 bot 行为：如果该单成交（用 demo-fill），状态会变
+}
+
+function resetForm(){
+  state.formValues = {
+    entry_price: state.globalConfig.default_entry_price,
+    exit_price: state.globalConfig.default_exit_price,
+    share_amount: state.globalConfig.default_share_amount,
+    take_profit_pct: state.globalConfig.default_take_profit_pct,
+    stop_loss_pct: state.globalConfig.default_stop_loss_pct,
+  };
+  render();
+  toast('info', '已重置为默认值');
+}
+
+function posStop(id){
+  const p = state.positions.find(x=>x.id===id);
+  if (!p) return;
+  if (p.state === 'BUY_PENDING'){
+    p.state = 'WAITING';
+    p.cycle += 1;
+    toast('amber', `已撤买单 · ${p.outcome}`);
+  } else if (p.state === 'HOLDING_WITH_SELL'){
+    p.state = 'HOLDING_NO_SELL';
+    p.cycle += 1;
+    toast('amber', `已撤保护卖单 · ${p.outcome}（持仓未平）`);
+  } else if (p.state === 'WAITING'){
+    p.state = 'CLOSED';
+    p.closed = true;
+    p.realized_pnl = 0;
+    toast('amber', `已停止监控 · ${p.outcome}`);
+  } else {
+    toast('warn', '当前状态不支持停止');
+    return;
+  }
+  render();
+}
+
+function posClose(id){
+  const p = state.positions.find(x=>x.id===id);
+  if (!p) return;
+  if (!(p.state === 'HOLDING_NO_SELL' || p.state === 'HOLDING_WITH_SELL')){
+    toast('warn', '当前状态不支持平仓');
+    return;
+  }
+  const book = getBook(p.token_id);
+  const realized = p.position_size * (book.bid - p.avg_price);
+  p.state = 'CLOSED';
+  p.closed = true;
+  p.share_amount = 0;
+  p.position_size = 0;
+  p.realized_pnl = realized;
+  p.cycle += 1;
+  toast(realized >= 0 ? 'mint' : 'rose', `已平仓 · ${p.outcome} @ ${book.bid.toFixed(4)} (${realized>=0?'+':''}${realized.toFixed(2)} USDC)`);
+  render();
+}
+
+function posReopen(id){
+  const p = state.positions.find(x=>x.id===id);
+  if (!p) return;
+  state.reopenSource = id;
+  state.selectedDirection = { market_q: p.market_q, outcome: p.outcome, token_id: p.token_id };
+  state.formValues = {
+    entry_price: p.entry_price,
+    exit_price: p.exit_price,
+    share_amount: p.share_amount,
+    take_profit_pct: p.take_profit_pct,
+    stop_loss_pct: p.stop_loss_pct,
+  };
+  render();
+  // 滚动到下单区
+  const l2 = document.getElementById('order-l2');
+  if (l2) l2.scrollIntoView({ behavior:'smooth', block:'center' });
+  toast('info', `已预填 [${p.outcome}] 的参数，等待你点击下单`);
+}
+
+function posDelete(id){
+  const p = state.positions.find(x=>x.id===id);
+  if (!p) return;
+  openConfirm({
+    variant: 'violet',
+    title: `删除策略 · ${p.outcome}`,
+    items: [
+      { text: `清除策略记录`, cls: 'violet', num: '1' },
+      { text: `${p.state === 'CLOSED' ? '已平仓策略将被永久移除' : (p.position_size > 0 ? '⚠ 该策略仍持仓，删除仅清记录不平仓' : '该策略无持仓，可安全删除')}` },
+    ],
+    warn: '此操作不可恢复 · 现存挂单需先"停止"',
+    confirmText: '确认删除',
+    onConfirm: ()=>{
+      const card = document.querySelector(`[data-pos-id="${id}"]`);
+      if (card){
+        card.classList.add('leaving');
+        setTimeout(()=>{
+          state.positions = state.positions.filter(x=>x.id !== id);
+          render();
+          toast('info', `已删除 · ${p.outcome}`);
+        }, 200);
+      } else {
+        state.positions = state.positions.filter(x=>x.id !== id);
+        render();
+      }
+    },
+  });
+}
+
+// ==========================================================================
+// 全局指令 + 影响汇总
+// ==========================================================================
+function openGlobalModal(kind){
+  const positions = state.positions;
+  let preview, onConfirm;
+
+  if (kind === 'stop'){
+    const buyPending = positions.filter(p => p.state === 'BUY_PENDING');
+    const waiting    = positions.filter(p => p.state === 'WAITING');
+    const withSell   = positions.filter(p => p.state === 'HOLDING_WITH_SELL');
+    const holdingNoSell = positions.filter(p => p.state === 'HOLDING_NO_SELL');
+    if (buyPending.length + waiting.length + withSell.length === 0){
+      toast('warn', '没有可停止的策略');
+      return;
+    }
+    preview = {
+      variant: 'amber',
+      title: '全部停止',
+      items: [
+        { text:'撤销待成交买单', cls:'amber', num:String(buyPending.length) },
+        { text:'停止监控（待入场）策略', cls:'amber', num:String(waiting.length) },
+        { text:'撤销保护卖单', cls:'amber', num:String(withSell.length) },
+        { text:`持仓中(待挂卖单)策略不受影响`, num:String(holdingNoSell.length) },
+        { text:'已持仓不被动摇，需另点"全部平仓"' },
+      ],
+      warn: '此操作撤单将立即下发至 CLOB · 不影响已持仓',
+      confirmText: '确认停止',
+      onConfirm: ()=>{
+        positions.forEach(p=>{
+          if (p.state === 'BUY_PENDING') p.state = 'WAITING';
+          else if (p.state === 'WAITING'){ p.state = 'CLOSED'; p.closed = true; p.realized_pnl = 0; }
+          else if (p.state === 'HOLDING_WITH_SELL') p.state = 'HOLDING_NO_SELL';
+        });
+        toast('amber', `已执行全部停止 · ${buyPending.length + waiting.length + withSell.length} 笔`);
+        render();
+      },
+    };
+  } else if (kind === 'close'){
+    const holding = positions.filter(p => p.position_size > 0 && !p.closed);
+    const withSell = holding.filter(p => p.state === 'HOLDING_WITH_SELL');
+    if (holding.length === 0){
+      toast('warn', '没有可平仓的持仓');
+      return;
+    }
+    const est = holding.reduce((s,p)=> s + p.position_size * getBook(p.token_id).bid, 0);
+    const mark = holding.reduce((s,p)=> s + p.position_size * p.avg_price, 0);
+    const slip = Math.abs(est - mark) * 0.3;
+    preview = {
+      variant: '',
+      title: '全部平仓',
+      items: [
+        { text:'撤销保护卖单', cls:'', num:String(withSell.length) },
+        { text:'按 best_bid 市价卖出持仓', cls:'mint', num:String(holding.length) },
+        { text:'预估回收 USDC', cls:'mint', num:est.toFixed(2) },
+        { text:'当前 mark 价值', cls:'', num:mark.toFixed(2) },
+        { text:'滑点风险 ±USDC', cls:'rose', num:slip.toFixed(2) },
+        { text:'已平仓策略将被跳过', num:String(positions.filter(p=>p.state==='CLOSED').length) },
+        { text:'待入场策略不受影响', num:String(positions.filter(p=>p.state==='WAITING').length) },
+      ],
+      warn: '此操作不可撤销 · 卖单将立即下发至 CLOB · 网络异常时可能部分成交',
+      confirmText: '确认平仓',
+      onConfirm: ()=>{
+        let totalRealized = 0;
+        holding.forEach(p=>{
+          const book = getBook(p.token_id);
+          const realized = p.position_size * (book.bid - p.avg_price);
+          totalRealized += realized;
+          p.state = 'CLOSED';
+          p.closed = true;
+          p.share_amount = 0;
+          p.position_size = 0;
+          p.realized_pnl = realized;
+        });
+        toast(totalRealized >= 0 ? 'mint' : 'rose', `已平仓 ${holding.length} 个 · 累计 ${totalRealized>=0?'+':''}${totalRealized.toFixed(2)} USDC`);
+        render();
+      },
+    };
+  } else if (kind === 'delete'){
+    if (positions.length === 0){
+      toast('warn', '没有可删除的策略');
+      return;
+    }
+    const closedCount = positions.filter(p=>p.state==='CLOSED').length;
+    const holdingCount = positions.filter(p=>p.position_size > 0 && !p.closed).length;
+    const orderCount = positions.filter(p=>p.state==='BUY_PENDING' || p.state==='HOLDING_WITH_SELL').length;
+    preview = {
+      variant: 'violet',
+      title: '全部删除',
+      items: [
+        { text:'清除策略记录', cls:'violet', num:String(positions.length) },
+        { text:'其中已平仓策略', num:String(closedCount) },
+        { text:'其中持仓策略', cls:'mint', num:String(holdingCount) },
+        { text:'其中挂单中策略', cls:'amber', num:String(orderCount) },
+        { text:'不撤销现存挂单（需先"全部停止"）' },
+        { text:'不平仓现存持仓（需先"全部平仓"）' },
+      ],
+      warn: '此操作不可恢复 · 仅清除扩展端记录，不影响 CLOB 实际挂单',
+      confirmText: '确认删除',
+      onConfirm: ()=>{
+        const n = positions.length;
+        state.positions = [];
+        toast('info', `已清空 ${n} 条策略记录`);
+        render();
+      },
+    };
+  }
+  openConfirm(preview);
+}
+
+// ==========================================================================
+// 弹窗
+// ==========================================================================
+function openConfirm(opts){
+  const overlay = $('#modal-overlay');
+  const modal = $('#modal');
+  modal.className = 'modal ' + (opts.variant || '');
+  const titleCls = opts.variant ? 'modal-title ' + opts.variant : 'modal-title';
+  const confirmCls = 'btn confirm ' + (opts.variant || '');
+  modal.innerHTML = `
+    <div class="modal-head">
+      <div class="${titleCls}">确认【${opts.title}】</div>
+      <div class="modal-close" id="modal-x">✕</div>
+    </div>
+    <div class="modal-body">
+      <div class="impact-list">
+        ${opts.items.map(it => `
+          <div class="impact-item ${it.cls || ''}">
+            <span>${it.text}${it.num != null ? ` <span class="num ${it.cls||''}">${it.num}</span>` : ''}</span>
+          </div>
+        `).join('')}
+      </div>
+      ${opts.warn ? `<div class="impact-warn">⚠ ${opts.warn}</div>` : ''}
+    </div>
+    <div class="modal-actions">
+      <button class="btn cancel" id="modal-cancel">取消</button>
+      <button class="${confirmCls}" id="modal-confirm">${opts.confirmText || '确认执行'}</button>
+    </div>`;
+  overlay.classList.add('show');
+  $('#modal-x').onclick      = closeModal;
+  $('#modal-cancel').onclick = closeModal;
+  $('#modal-confirm').onclick = ()=>{
+    closeModal();
+    if (opts.onConfirm) opts.onConfirm();
+  };
+  overlay.onclick = (e)=>{ if (e.target === overlay) closeModal(); };
+}
+
+function closeModal(){
+  $('#modal-overlay').classList.remove('show');
+}
+
+document.addEventListener('keydown', e=>{
+  if (e.key === 'Escape') closeModal();
+});
+
+// ==========================================================================
+// Toast
+// ==========================================================================
+function toast(kind, msg){
+  const c = document.getElementById('toast-container');
+  const el = document.createElement('div');
+  el.className = 'toast ' + (kind === 'mint' ? '' : kind);
+  el.textContent = msg;
+  c.appendChild(el);
+  setTimeout(()=>{
+    el.classList.add('leaving');
+    setTimeout(()=> el.remove(), 200);
+  }, 3000);
+}
+
+// ==========================================================================
+// 演示控制面板
+// ==========================================================================
+function initDemoPanel(){
+  const panel = $('#demo-panel');
+  const toggle = $('#demo-toggle');
+  toggle.onclick = ()=> panel.classList.toggle('open');
+
+  $('#demo-url').onchange = (e)=>{
+    state.currentUrlKey = e.target.value;
+    state.selectedDirection = null;
+    state.reopenSource = null;
+    state.expandedMore = false;
+    toast('info', `切换 URL → ${getScenario().url}`);
+    render();
+  };
+  $('#demo-url').value = state.currentUrlKey;
+
+  $('#demo-fill').onclick = ()=>{
+    // 让第一个 BUY_PENDING 成交，模拟买单 fill → 自动 2s 后挂保护卖单
+    const p = state.positions.find(x=>x.state === 'BUY_PENDING');
+    if (!p){
+      toast('warn', '没有待成交的买单');
+      return;
+    }
+    // 1. 买单成交 → 持仓中(待挂卖单)
+    p.state = 'HOLDING_NO_SELL';
+    p.position_size = p.share_amount;
+    p.avg_price = p.entry_price;
+    p.cycle += 1;
+    toast('mint', `买单成交 · ${p.outcome} ${p.share_amount} @ ${p.entry_price}`);
+    render();
+    // 2. 2 秒后模拟 bot 自动挂保护卖单 → 持仓中(已挂保护卖单)
+    setTimeout(()=>{
+      const cur = state.positions.find(x=>x.id === p.id);
+      if (cur && cur.state === 'HOLDING_NO_SELL'){
+        cur.state = 'HOLDING_WITH_SELL';
+        cur.cycle += 1;
+        toast('mint', `已自动挂保护卖单 · ${cur.outcome} ${cur.share_amount} @ ${cur.exit_price}`);
+        render();
+      }
+    }, 2000);
+  };
+
+  $('#demo-reset').onclick = ()=>{
+    resetState();
+    $('#demo-url').value = state.currentUrlKey;
+    toast('info', '已重置为初始 Mock 数据');
+    render();
+  };
+
+  $('#demo-conn').onclick = ()=>{
+    state.connection.online = !state.connection.online;
+    if (state.connection.online){
+      state.connection.latency = 8 + Math.floor(Math.random() * 20);
+      toast('mint', 'FastAPI 已连接');
+    } else {
+      toast('error', 'FastAPI 断开');
+    }
+    render();
+  };
+}
+
+// 模拟 cycle 递增（让卡片周期号缓慢上涨，强化"在线"感）
+setInterval(()=>{
+  if (!state.connection.online) return;
+  state.cycleCounter += 1;
+  state.positions.forEach(p=>{ p.cycle += 1; });
+  // 仅更新周期显示，不全量 render
+  document.querySelectorAll('.pos-cycle').forEach((el, i)=>{
+    if (state.positions[i]) el.textContent = `cyc ${state.positions[i].cycle}`;
+  });
+  // 更新持仓区 section-meta 的文本节点（保留 toggle-all 子元素）
+  const posMeta = document.querySelector('#positions-section-meta');
+  if (posMeta){
+    // 重新渲染 meta 内容（保留 toggle-all）
+    const expandedCount = state.positions.filter(p => state.expandedPositions[p.id]).length;
+    const allExpanded = expandedCount === state.positions.length;
+    const toggleLabel = allExpanded ? '▼ 全部收起' : '▶ 全部展开';
+    posMeta.innerHTML = `${state.positions.length} strategies · cycle ${state.cycleCounter}<span class="toggle-all" id="toggle-all-positions">${toggleLabel}</span>`;
+    // 重新绑定 toggle-all
+    const toggleAll = document.getElementById('toggle-all-positions');
+    if (toggleAll){
+      toggleAll.onclick = ()=>{
+        const allExp = state.positions.every(p => state.expandedPositions[p.id]);
+        state.expandedPositions = {};
+        if (!allExp){
+          state.positions.forEach(p=>{ state.expandedPositions[p.id] = true; });
+        }
+        render();
+      };
+    }
+  }
+}, 5000);
+
+// ==========================================================================
+// 启动
+// ==========================================================================
+resetState();
+render();
+initDemoPanel();
+// 默认打开演示面板提示
+setTimeout(()=>{ $('#demo-panel').classList.add('open'); }, 600);
+</script>
+
+</body>
+</html>
