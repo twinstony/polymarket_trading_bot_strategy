@@ -1,13 +1,19 @@
 """
-启动时交互式市场配置。
+启动时交互式市场配置（纯内存，不持久化）。
 
 流程：
-1. 输入 Polymarket 市场 URL 或 slug（回车跳过使用当前 .env 配置）
+1. 输入 Polymarket 市场 URL 或 slug（输入新 URL 会清空已有策略列表）
 2. 通过 Gamma API 解析该市场所有可交易 market 及其 outcomes（下注 token）
-3. 命令行选择 market 与 outcome，MARKET_LABEL 自动补全为人类可读内容
-4. 依次输入 entry_price / exit_price / share_amount / take_profit_pct / stop_loss_pct
-   （均可回车跳过保留当前值）
-5. 汇总策略信息由用户确认后写入 config.json 并开始运行
+3. 命令行选择 market
+4. 选择下注方向：
+   - 单边：输入 outcome 编号，为该 outcome 配置参数
+   - 双边：输入 b，为该 market 所有 outcomes 分别配置参数
+5. 每个策略独立设置 entry_price / exit_price / share_amount / 止盈% / 止损%
+6. 汇总确认
+7. 可循环添加更多策略（同一市场选其他 outcome，或输入新 URL 重新开始）
+8. 返回 list[StrategyConfig]，由 RuntimeManager 接管
+
+策略列表纯内存，每次启动为空，不写入 config.json。
 """
 
 from __future__ import annotations
@@ -18,71 +24,196 @@ from typing import Any
 
 import httpx
 
-from config import Config, ConfigGuard
+from config import Config, StrategyConfig
 
 GAMMA_EVENTS_URL = "https://gamma-api.polymarket.com/events"
 GAMMA_MARKETS_URL = "https://gamma-api.polymarket.com/markets"
 CLOB_BOOK_URL = "https://clob.polymarket.com/book"
 
 
-def run_interactive_setup(config: Config, guard: ConfigGuard) -> bool:
-    """运行交互式市场配置。返回 True 表示可继续运行，False 表示应退出。"""
+def run_interactive_setup(config: Config) -> list[StrategyConfig]:
+    """运行交互式市场配置。返回策略列表（纯内存）。"""
     print("\n" + "=" * 72)
-    print(" Polymarket 交互式市场配置")
+    print(" Polymarket 交互式市场配置（内存模式，不持久化）")
     print("=" * 72)
 
-    current = guard.active_market()
-    if current and current.token_id:
-        t = config.trading
-        print(
-            f"当前活动市场: {current.display()}\n"
-            f"  entry={t.entry_price} exit={t.exit_price} "
-            f"shares={t.share_amount} conditional_entry={t.conditional_entry}"
-        )
+    strategies: list[StrategyConfig] = []
 
-    raw = input(
-        "\n输入 Polymarket 市场 URL 或 slug（回车跳过使用当前配置）: "
-    ).strip()
-    if not raw:
-        print("[setup] 沿用现有配置启动")
-        return True
+    while True:
+        raw = input(
+            "\n输入 Polymarket 市场 URL 或 slug"
+            + ("" if strategies else "（必填）")
+            + "，q 退出: "
+        ).strip()
+        if raw.lower() == "q":
+            if strategies:
+                print(f"[setup] 保留已配置的 {len(strategies)} 个策略")
+                break
+            print("[setup] 未配置任何策略，退出")
+            return []
+        if not raw:
+            if strategies:
+                break  # 已有策略，回车=完成
+            print("[setup] 首次配置必须输入市场 URL 或 slug")
+            continue
 
-    slug = extract_slug(raw)
-    if not slug:
-        print(f"[setup] 无法从输入解析 slug: {raw}")
-        return False
+        # 输入新 URL → 清空已有策略列表
+        if strategies:
+            print(f"[setup] 输入新市场，清空已有 {len(strategies)} 个策略")
+            strategies.clear()
 
-    markets = fetch_markets(slug)
-    if not markets:
-        print(f"[setup] 未找到 slug={slug} 对应的市场，或市场均已关闭")
-        return False
+        slug = extract_slug(raw)
+        if not slug:
+            print(f"[setup] 无法从输入解析 slug: {raw}")
+            continue
 
-    market = select_market(markets)
-    if market is None:
-        print("[setup] 已取消")
-        return False
+        markets = fetch_markets(slug)
+        if not markets:
+            print(f"[setup] 未找到 slug={slug} 对应的市场，或市场均已关闭")
+            continue
 
-    token_id, outcome_name = select_outcome(market)
-    if token_id is None:
-        print("[setup] 已取消")
-        return False
+        market = select_market(markets)
+        if market is None:
+            continue
 
+        # 为选中的 market 配置策略（单边 / 双边 / 循环追加）
+        strategies.extend(configure_market_strategies(market, config))
+
+        print(f"\n[setup] 当前共 {len(strategies)} 个策略")
+        for i, s in enumerate(strategies, 1):
+            print(f"  [{i}] {s.label}  entry={s.entry_price} exit={s.exit_price} size={s.share_amount}")
+
+        more = input("\n继续添加策略？(y/N): ").strip().lower()
+        if more not in ("y", "yes"):
+            break
+
+    return strategies
+
+
+# --------------------------------------------------------------------------- #
+# 为单个 market 配置策略（单边 / 双边）
+# --------------------------------------------------------------------------- #
+def configure_market_strategies(
+    market: dict[str, Any], config: Config
+) -> list[StrategyConfig]:
+    """为选中的 market 配置一个或多个策略，返回 StrategyConfig 列表。"""
+    outcomes = market["outcomes"]
+    token_ids = market["clob_token_ids"]
+    n = len(outcomes)
+
+    print(f"\n市场: {market['question']}")
+    print("下注选项（含实时盘口）:")
+    prices: list[tuple[float | None, float | None]] = []
+    for i, (name, tid) in enumerate(zip(outcomes, token_ids), 1):
+        bid, ask = fetch_token_price(tid)
+        prices.append((bid, ask))
+        price_str = f"  买价={ask}" if ask is not None else ""
+        price_str += f" 卖价={bid}" if bid is not None else ""
+        if not price_str:
+            price_str = "  (无盘口)"
+        print(f"  [{i}] {name}  token=...{tid[-8:]}{price_str}")
+
+    if n >= 2:
+        print(f"  [b] 双边下注 — 为所有 {n} 个 outcomes 分别配置参数")
+
+    result: list[StrategyConfig] = []
+    while True:
+        raw = input(
+            f"\n选择下注方向编号 (1-{n})"
+            + ("，b=双边" if n >= 2 else "")
+            + ("，q=完成此市场" if result else "，q=取消")
+            + ": "
+        ).strip()
+
+        if raw.lower() == "q":
+            if result:
+                return result
+            return []
+
+        if n >= 2 and raw.lower() == "b":
+            # 双边下注：为每个 outcome 独立配置
+            print(f"\n--- 双边下注：为 {n} 个 outcomes 分别配置 ---")
+            for i, (name, tid) in enumerate(zip(outcomes, token_ids), 1):
+                bid, ask = prices[i - 1]
+                print(f"\n[{i}/{n}] {name}  (买价={ask} 卖价={bid})")
+                sc = configure_single_strategy(market, name, tid, config)
+                if sc is None:
+                    print(f"[setup] 跳过 {name}")
+                    continue
+                result.append(sc)
+            if result:
+                return result
+            print("[setup] 双边下注未配置任何策略")
+            continue
+
+        # 单边下注
+        try:
+            idx = int(raw)
+            if not (1 <= idx <= n):
+                print(f"[setup] 请输入 1-{n} 之间的数字")
+                continue
+        except ValueError:
+            print("[setup] 无效输入")
+            continue
+
+        name = outcomes[idx - 1]
+        tid = token_ids[idx - 1]
+        bid, ask = prices[idx - 1]
+        print(f"\n配置: {name}  (买价={ask} 卖价={bid})")
+        sc = configure_single_strategy(market, name, tid, config)
+        if sc is None:
+            print("[setup] 已取消此策略")
+            continue
+        result.append(sc)
+
+        more = input("为此市场继续添加策略？(y/N): ").strip().lower()
+        if more not in ("y", "yes"):
+            return result
+
+
+def configure_single_strategy(
+    market: dict[str, Any],
+    outcome_name: str,
+    token_id: str,
+    config: Config,
+) -> StrategyConfig | None:
+    """为一个 outcome 配置完整策略参数，返回 StrategyConfig 或 None（取消）。"""
     label = build_label(market, outcome_name)
 
-    params = input_params(config)
-    if params is None:
-        print("[setup] 已取消")
-        return False
+    entry = _ask_float("买入价 entry_price", config.default_entry_price)
+    if entry is None:
+        return None
 
-    if not confirm(label, token_id, params, config):
-        print("[setup] 用户取消，退出")
-        return False
+    exit_p = _ask_float("卖出价 exit_price", config.default_exit_price)
+    if exit_p is None:
+        return None
 
-    # 写入配置（持久化到 config.json）
-    guard.add_or_switch_market(token_id, label)
-    guard.update(**params)
-    print(f"[setup] 配置已保存: {label}")
-    return True
+    size = _ask_float("买入数量 share_amount", config.default_share_amount)
+    if size is None:
+        return None
+
+    tp = _ask_optional_float("止盈百分比 take_profit_pct", config.default_take_profit_pct)
+    if tp is _CANCELLED:
+        return None
+
+    sl = _ask_optional_float("止损百分比 stop_loss_pct", config.default_stop_loss_pct)
+    if sl is _CANCELLED:
+        return None
+
+    sc = StrategyConfig(
+        token_id=token_id,
+        label=label,
+        entry_price=entry,
+        exit_price=exit_p,
+        share_amount=size,
+        take_profit_pct=tp,
+        stop_loss_pct=sl,
+    )
+
+    if not confirm_strategy(sc):
+        return None
+
+    return sc
 
 
 # --------------------------------------------------------------------------- #
@@ -93,14 +224,12 @@ def extract_slug(raw: str) -> str:
     raw = raw.strip()
     if not raw:
         return ""
-    # 含 http(s):// 视为 URL，取最后一段路径
     if "://" in raw:
         parsed = urllib.parse.urlparse(raw)
         path = parsed.path.rstrip("/")
         if not path:
             return ""
         return path.rsplit("/", 1)[-1]
-    # 裸 slug：去掉可能的前导斜杠
     return raw.strip("/").rsplit("/", 1)[-1]
 
 
@@ -108,13 +237,7 @@ def extract_slug(raw: str) -> str:
 # Gamma API 查询
 # --------------------------------------------------------------------------- #
 def fetch_markets(slug: str) -> list[dict[str, Any]]:
-    """查询 slug 对应的所有可交易 market。
-
-    优先用 /events 端点（一个 event 含多个 market），
-    fallback 到 /markets 端点（单个 market）。
-    返回统一结构的 dict 列表。
-    """
-    # 1) 优先 events 端点
+    """查询 slug 对应的所有可交易 market。"""
     try:
         resp = httpx.get(GAMMA_EVENTS_URL, params={"slug": slug}, timeout=20)
         resp.raise_for_status()
@@ -128,7 +251,6 @@ def fetch_markets(slug: str) -> list[dict[str, Any]]:
     except Exception as exc:  # noqa: BLE001
         print(f"[setup] events 查询失败: {exc}")
 
-    # 2) fallback markets 端点
     try:
         resp = httpx.get(GAMMA_MARKETS_URL, params={"slug": slug}, timeout=20)
         resp.raise_for_status()
@@ -145,7 +267,6 @@ def _normalize_market(m: dict[str, Any], event_title: str) -> dict[str, Any]:
     """把 Gamma 返回的 market 归一化为统一结构。"""
     outcomes = _parse_json_list_field(m.get("outcomes"))
     token_ids = _parse_json_list_field(m.get("clobTokenIds"))
-    # 若 outcomes 与 tokenIds 数量不一致，按较短的截断
     n = min(len(outcomes), len(token_ids))
     return {
         "question": str(m.get("question") or event_title),
@@ -160,7 +281,6 @@ def _normalize_market(m: dict[str, Any], event_title: str) -> dict[str, Any]:
 
 
 def _parse_json_list_field(raw: Any) -> list[str]:
-    """outcomes / clobTokenIds 在 Gamma 返回里是 JSON 字符串。"""
     if isinstance(raw, list):
         return [str(x) for x in raw]
     if isinstance(raw, str):
@@ -219,93 +339,20 @@ def select_market(markets: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 # --------------------------------------------------------------------------- #
-# 交互：选择 outcome（下注方向）
+# 交互：参数输入
 # --------------------------------------------------------------------------- #
-def select_outcome(market: dict[str, Any]) -> tuple[str, str] | None:
-    """展示某 market 的所有 outcomes 供选择，返回 (token_id, outcome_name) 或 None。"""
-    print(f"\n市场: {market['question']}")
-    print("下注选项（含实时盘口）:")
+_SKIP = object()      # 回车跳过（保留默认值）
+_CANCELLED = object()  # 用户按 q 取消
 
-    outcomes = market["outcomes"]
-    token_ids = market["clob_token_ids"]
-    prices: list[tuple[float | None, float | None]] = []
-    for i, (name, tid) in enumerate(zip(outcomes, token_ids), 1):
-        bid, ask = fetch_token_price(tid)
-        prices.append((bid, ask))
-        price_str = f"  买价={ask}" if ask is not None else ""
-        price_str += f" 卖价={bid}" if bid is not None else ""
-        if not price_str:
-            price_str = "  (无盘口)"
-        print(f"  [{i}] {name}  token=...{tid[-8:]}{price_str}")
 
+def _ask_float(label_zh: str, default: float) -> float | None:
+    """问一个必填浮点数，回车=用默认值，q=取消返回 None。"""
     while True:
-        raw = input(f"\n选择下注方向编号 (1-{len(outcomes)})，q 取消: ").strip()
-        if raw.lower() == "q":
-            return None
-        try:
-            idx = int(raw)
-            if 1 <= idx <= len(outcomes):
-                return token_ids[idx - 1], outcomes[idx - 1]
-            print(f"[setup] 请输入 1-{len(outcomes)} 之间的数字")
-        except ValueError:
-            print("[setup] 无效输入，请输入数字")
-
-
-# --------------------------------------------------------------------------- #
-# 交互：输入交易参数
-# --------------------------------------------------------------------------- #
-# 哨兵值：区分"回车跳过"与"取消"
-_SKIP = object()   # 回车跳过（保留当前值，不更新）
-_CANCEL = object()  # 用户按 q 取消整个流程
-
-
-def input_params(config: Config) -> dict[str, Any] | None:
-    """依次询问 5 个参数，回车跳过保留当前值。返回适合 guard.update 的 kwargs。"""
-    t = config.trading
-    params: dict[str, Any] = {}
-
-    # entry_price / exit_price / share_amount：必填浮点数，回车=保留当前
-    for key, label_zh in (
-        ("entry_price", "买入价 entry_price"),
-        ("exit_price", "卖出价 exit_price"),
-        ("share_amount", "买入数量 share_amount"),
-    ):
-        current = getattr(t, key)
-        val = _ask_float(f"{label_zh}（当前 {current}，回车保留）: ", current)
-        if val is None:  # 用户按 q 取消
-            return None
-        if val != current:
-            params[key] = val
-
-    # take_profit_pct / stop_loss_pct：可选，回车跳过，n 清除，q 取消
-    for key, label_zh in (
-        ("take_profit_pct", "止盈百分比 take_profit_pct"),
-        ("stop_loss_pct", "止损百分比 stop_loss_pct"),
-    ):
-        current = getattr(t, key)
-        cur_label = "未设置" if current is None else current
-        val = _ask_optional_float(
-            f"{label_zh}（当前 {cur_label}，回车跳过，n 清除，0.1=10%）: "
-        )
-        if val is _CANCEL:
-            return None
-        if val is _SKIP:
-            continue  # 保留当前值，不加入 params
-        # val 是 float（新值）或 None（用户输入 n 清除）
-        if val != current:
-            params[key] = val
-
-    return params
-
-
-def _ask_float(prompt: str, current: float) -> float | None:
-    """问一个必填浮点数，回车=保留当前值，q=取消返回 None。"""
-    while True:
-        raw = input(prompt).strip()
+        raw = input(f"{label_zh}（默认 {default}，回车保留）: ").strip()
         if raw.lower() == "q":
             return None
         if raw == "":
-            return current
+            return default
         try:
             v = float(raw)
             if v <= 0:
@@ -316,69 +363,56 @@ def _ask_float(prompt: str, current: float) -> float | None:
             print("[setup] 无效数字，请重新输入")
 
 
-def _ask_optional_float(prompt: str) -> Any:
+def _ask_optional_float(label_zh: str, default: float | None) -> Any:
     """问一个可选浮点数。
 
     返回：
-      - _SKIP：用户回车跳过（保留当前）
-      - _CANCEL：用户按 q 取消整个流程
-      - None：用户输入 n 主动清除
+      - _SKIP：回车跳过（用默认值）
+      - _CANCELLED：q 取消
+      - None：n 清除
       - float：用户输入的值
     """
+    cur_label = "未设置" if default is None else default
     while True:
-        raw = input(prompt).strip()
+        raw = input(
+            f"{label_zh}（默认 {cur_label}，回车保留，n 清除，0.1=10%）: "
+        ).strip()
         if raw.lower() == "q":
-            return _CANCEL
+            return _CANCELLED
         if raw == "":
-            return _SKIP
+            return default  # 用默认值（可能是 None）
         if raw.lower() == "n":
             return None  # 清除
         try:
             return float(raw)
         except ValueError:
-            print("[setup] 无效数字，请重新输入（回车跳过，n 清除）")
+            print("[setup] 无效数字（回车保留，n 清除）")
 
 
 def build_label(market: dict[str, Any], outcome_name: str) -> str:
-    """生成人类可读的 MARKET_LABEL。"""
-    question = market["question"]
-    return f"{question} [{outcome_name}]"
+    return f"{market['question']} [{outcome_name}]"
 
 
 # --------------------------------------------------------------------------- #
 # 确认
 # --------------------------------------------------------------------------- #
-def confirm(
-    label: str,
-    token_id: str,
-    params: dict[str, Any],
-    config: Config,
-) -> bool:
-    """展示策略摘要并由用户确认。"""
-    t = config.trading
-    # params 里有的用 params，没有的用当前值
-    entry = params.get("entry_price", t.entry_price)
-    exit_p = params.get("exit_price", t.exit_price)
-    shares = params.get("share_amount", t.share_amount)
-    tp = params.get("take_profit_pct", t.take_profit_pct)
-    sl = params.get("stop_loss_pct", t.stop_loss_pct)
+def confirm_strategy(sc: StrategyConfig) -> bool:
+    """展示单个策略摘要并由用户确认。"""
+    notional = sc.entry_price * sc.share_amount
+    tp_str = f"{sc.take_profit_pct*100:.1f}%" if sc.take_profit_pct is not None else "未设置"
+    sl_str = f"{sc.stop_loss_pct*100:.1f}%" if sc.stop_loss_pct is not None else "未设置"
 
-    notional = entry * shares
-    tp_str = f"{tp*100:.1f}%" if isinstance(tp, float) else "未设置"
-    sl_str = f"{sl*100:.1f}%" if isinstance(sl, float) else "未设置"
-
-    print("\n" + "=" * 50)
+    print("\n" + "-" * 50)
     print(" 策略确认")
-    print("=" * 50)
-    print(f"  市场标签: {label}")
-    print(f"  Token ID: {token_id}")
-    print(f"  买入价:   {entry}")
-    print(f"  卖出价:   {exit_p}")
-    print(f"  买入数量: {shares} 份  (约 {notional:.2f} USDC)")
+    print("-" * 50)
+    print(f"  市场标签: {sc.label}")
+    print(f"  Token ID: {sc.token_id}")
+    print(f"  买入价:   {sc.entry_price}")
+    print(f"  卖出价:   {sc.exit_price}")
+    print(f"  买入数量: {sc.share_amount} 份  (约 {notional:.2f} USDC)")
     print(f"  止盈百分比: {tp_str}")
     print(f"  止损百分比: {sl_str}")
-    print(f"  条件入场:   {t.conditional_entry}  (true=等待价格, false=立即挂单)")
-    print("=" * 50)
+    print("-" * 50)
 
-    raw = input("确认开始运行？(Y/n): ").strip()
+    raw = input("确认此策略？(Y/n): ").strip()
     return raw.lower() in ("", "y", "yes")

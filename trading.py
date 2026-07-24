@@ -33,6 +33,7 @@ from py_clob_client_v2 import (
     PartialCreateOrderOptions,
     Side,
 )
+from py_clob_client_v2.clob_types import OrderPayload
 from py_clob_client_v2.http_helpers import helpers as clob_http_helpers
 
 from strategy import MarketData
@@ -262,6 +263,68 @@ def get_last_trade_price(client: ClobClient, token_id: str) -> float | None:
         return _to_float(raw)
     except Exception:
         return None
+
+
+# --------------------------------------------------------------------------- #
+# Order cancellation
+# --------------------------------------------------------------------------- #
+def cancel_order(client: ClobClient, order_id: str) -> bool:
+    """Cancel a single open order by its id."""
+    if client is None or not order_id:
+        return False
+    try:
+        client.cancel_order(OrderPayload(orderID=order_id))
+        print(f"[trading] cancelled order {order_id}")
+        return True
+    except Exception as exc:
+        print(f"[trading] cancel failed for {order_id}: {exc}")
+        return False
+
+
+def cancel_open_orders_for_token(
+    client: ClobClient, token_id: str, side: str | None = None
+) -> int:
+    """Cancel all open orders matching ``token_id`` (and optionally ``side``).
+
+    Returns the number of orders successfully cancelled.
+    """
+    if client is None:
+        return 0
+    try:
+        orders = client.get_open_orders()
+    except Exception as exc:
+        print(f"[trading] get_open_orders failed during cancel: {exc}")
+        return 0
+    if not isinstance(orders, list):
+        return 0
+
+    to_cancel: list[str] = []
+    for o in orders:
+        d = o if isinstance(o, dict) else _order_to_dict(o)
+        o_token = str(d.get("asset_id") or d.get("token_id") or d.get("market") or "")
+        if o_token != token_id:
+            continue
+        if side is not None:
+            o_side = str(d.get("side", "")).upper()
+            if o_side != side.upper():
+                continue
+        oid = str(d.get("id") or d.get("order_id") or d.get("orderID") or "")
+        if oid:
+            to_cancel.append(oid)
+
+    if not to_cancel:
+        return 0
+    try:
+        client.cancel_orders(to_cancel)
+        print(f"[trading] cancelled {len(to_cancel)} order(s) for token ...{token_id[-8:]}")
+        return len(to_cancel)
+    except Exception as exc:
+        print(f"[trading] batch cancel failed, trying individual: {exc}")
+        count = 0
+        for oid in to_cancel:
+            if cancel_order(client, oid):
+                count += 1
+        return count
 
 
 def _order_to_dict(obj: Any) -> dict[str, Any]:
