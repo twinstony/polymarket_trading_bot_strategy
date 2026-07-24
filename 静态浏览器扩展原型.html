@@ -293,6 +293,18 @@
     white-space:nowrap;
     flex:1;
   }
+  .url-bar .url-switch{color:var(--text-muted);cursor:pointer;font-size:11px;padding:0 4px}
+  .url-bar .url-switch:hover{color:var(--acc-cyan)}
+  .url-bar .url-back{color:var(--acc-cyan);cursor:pointer;font-size:11px;padding:0 4px;letter-spacing:0.04em}
+  .url-bar .url-back:hover{color:var(--text-primary)}
+  .url-bar .url-parse-btn{color:var(--acc-mint);cursor:pointer;font-size:10px;padding:1px 8px;border:1px solid var(--acc-mint);border-radius:2px;letter-spacing:0.04em;transition:all 180ms ease}
+  .url-bar .url-parse-btn:hover{background:rgba(0,255,157,0.12);box-shadow:var(--shadow-mint)}
+  .url-bar .url-input{flex:1;background:transparent;border:none;color:var(--text-primary);font-family:'JetBrains Mono',monospace;font-size:11px;outline:none;min-width:0}
+  .url-bar .url-input::placeholder{color:var(--text-muted)}
+  .url-bar.manual{border-color:var(--acc-cyan);background:rgba(0,212,255,0.04)}
+  .url-source-tag{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--acc-amber);background:rgba(255,170,0,0.08);padding:1px 6px;border:1px solid rgba(255,170,0,0.25);border-radius:2px;letter-spacing:0.08em;margin-left:6px}
+  .url-modes-title{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--text-muted);letter-spacing:0.1em;text-transform:uppercase;margin:0 0 6px 2px}
+  .url-modes-title::before{content:"▍ ";color:var(--acc-amber)}
 
   .direction-list{display:flex;flex-direction:column;gap:4px}
   .direction{
@@ -814,9 +826,12 @@
         <div class="section-meta">当前 URL 解析 · top 5</div>
       </div>
 
+      <!-- 状态 1：默认态（当前页 URL，只读 + ⇄ 切换到手动输入） -->
+      <div class="url-modes-title">默认态 · 当前页 URL</div>
       <div class="url-bar">
         <span class="url-tag">URL</span>
         <span class="url-text">polymarket.com/event/lpl-s13-finals</span>
+        <span class="url-switch" title="手动输入 slug">⇄</span>
       </div>
 
       <div class="direction-list">
@@ -878,6 +893,24 @@
         </div>
 
         <div class="more-row">▼ 展开更多 (3)</div>
+      </div>
+
+      <!-- 状态 2：输入态（点击 ⇄ 后，input + 解析按钮 + 取消） -->
+      <div class="url-modes-title" style="margin-top:14px">输入态 · 手动输入 slug</div>
+      <div class="url-bar manual">
+        <span class="url-tag">SLUG</span>
+        <input class="url-input" placeholder="输入 slug 或完整 URL，如 lpl-s13-finals" value="worlds-2026-groups" />
+        <span class="url-parse-btn">解析</span>
+        <span class="url-switch" title="取消">✕</span>
+      </div>
+
+      <!-- 状态 3：手动 slug 已解析态（显示手动 url + 来源标记 + ⤺ 返回） -->
+      <div class="url-modes-title" style="margin-top:14px">已解析态 · 手动 slug 生效</div>
+      <div class="url-bar manual">
+        <span class="url-tag">SLUG</span>
+        <span class="url-text">polymarket.com/event/worlds-2026-groups</span>
+        <span class="url-source-tag">手动</span>
+        <span class="url-back" title="返回当前页 URL">⤺ 返回</span>
       </div>
     </div>
 

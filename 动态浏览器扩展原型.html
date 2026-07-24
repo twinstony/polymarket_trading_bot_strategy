@@ -111,6 +111,14 @@
   .url-bar .url-text{color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
   .url-bar .url-switch{color:var(--text-muted);cursor:pointer;font-size:11px;padding:0 4px}
   .url-bar .url-switch:hover{color:var(--acc-cyan)}
+  .url-bar .url-back{color:var(--acc-cyan);cursor:pointer;font-size:11px;padding:0 4px;letter-spacing:0.04em}
+  .url-bar .url-back:hover{color:var(--text-primary)}
+  .url-bar .url-parse-btn{color:var(--acc-mint);cursor:pointer;font-size:10px;padding:1px 8px;border:1px solid var(--acc-mint);border-radius:2px;letter-spacing:0.04em;transition:all 180ms ease}
+  .url-bar .url-parse-btn:hover{background:rgba(0,255,157,0.12);box-shadow:var(--shadow-mint)}
+  .url-bar .url-input{flex:1;background:transparent;border:none;color:var(--text-primary);font-family:'JetBrains Mono',monospace;font-size:11px;outline:none;min-width:0}
+  .url-bar .url-input::placeholder{color:var(--text-muted)}
+  .url-bar.manual{border-color:var(--acc-cyan);background:rgba(0,212,255,0.04)}
+  .url-source-tag{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--acc-amber);background:rgba(255,170,0,0.08);padding:1px 6px;border:1px solid rgba(255,170,0,0.25);border-radius:2px;letter-spacing:0.08em;margin-left:6px}
   .direction-list{display:flex;flex-direction:column;gap:4px}
   .direction{background:var(--bg-surface);border:1px solid var(--border-hair);border-radius:2px;padding:0;transition:all 180ms ease;cursor:pointer}
   .direction:hover{border-color:var(--border-glow)}
@@ -424,6 +432,11 @@ const state = {
     default_take_profit_pct:0.10, default_stop_loss_pct:0.05, conditional_entry:true,
   },
   cycleCounter:42,
+  // URL 来源管理：'tab'=当前页解析，'manual'=手动输入 slug
+  urlSource:'tab',
+  manualSlug:'',             // 手动输入的 slug（仅 urlSource='manual' 时生效）
+  manualScenario:null,       // 手动解析出的 scenario 对象（模拟 /api/url/parse 结果）
+  urlInputMode:false,        // url-bar 是否处于输入模式（点击 ⇄ 切换）
 };
 
 function resetState(){
@@ -436,13 +449,31 @@ function resetState(){
   state.expandedPositions = {};   // 默认全部收起
   state.formValues = { entry_price:0.50, exit_price:0.55, share_amount:10, take_profit_pct:0.10, stop_loss_pct:0.05 };
   state.cycleCounter = 42;
+  state.urlSource = 'tab';
+  state.manualSlug = '';
+  state.manualScenario = null;
+  state.urlInputMode = false;
 }
 
 // ==========================================================================
 // 辅助函数
 // ==========================================================================
 function $(sel){ return document.querySelector(sel); }
-function getScenario(){ return URL_SCENARIOS[state.currentUrlKey]; }
+function getScenario(){
+  // 手动 slug 解析成功后用 manualScenario，否则用当前 tab URL 场景
+  if (state.urlSource === 'manual' && state.manualScenario) return state.manualScenario;
+  return URL_SCENARIOS[state.currentUrlKey];
+}
+
+// 模拟 /api/url/parse?slug=<input> —— 在内置 URL_SCENARIOS 中查找，找不到返回 null
+function parseManualSlug(slug){
+  const s = (slug || '').trim();
+  if (!s) return null;
+  // 支持完整 URL 或裸 slug：取最后一段作为 key
+  const key = s.split('/').filter(Boolean).pop() || s;
+  if (URL_SCENARIOS[key]) return { ...URL_SCENARIOS[key], url:`polymarket.com/event/${key}` };
+  return null;
+}
 function getBook(token_id){ return MOCK_BOOKS[token_id] || { bid:0.50, ask:0.52 }; }
 
 function findPositionByToken(token_id){ return state.positions.find(p => p.token_id === token_id); }
@@ -570,18 +601,47 @@ function renderOrderArea(){
   const showSelected = state.selectedDirection;
   const showReopenBanner = state.reopenSource != null;
 
+  // url-bar 三种态：tab 输入态 / manual 已解析态 / tab 默认态
+  let urlBarHtml;
+  if (state.urlInputMode){
+    // 输入模式：input + 解析按钮 + 取消
+    urlBarHtml = `
+      <div class="url-bar manual">
+        <span class="url-tag">SLUG</span>
+        <input class="url-input" id="url-input" placeholder="输入 slug 或完整 URL，如 lpl-s13-finals" value="${state.manualSlug||''}" />
+        <span class="url-parse-btn" id="url-parse">解析</span>
+        <span class="url-switch" id="url-cancel-input" title="取消">✕</span>
+      </div>`;
+  } else if (state.urlSource === 'manual' && state.manualScenario){
+    // 手动 slug 已解析：显示手动 url + 返回按钮 + 来源标记
+    urlBarHtml = `
+      <div class="url-bar manual">
+        <span class="url-tag">SLUG</span>
+        <span class="url-text">${state.manualScenario.url}</span>
+        <span class="url-source-tag">手动</span>
+        <span class="url-back" id="url-back" title="返回当前页 URL">⤺ 返回</span>
+      </div>`;
+  } else {
+    // 默认：当前 tab URL + 切换到手动输入
+    urlBarHtml = `
+      <div class="url-bar">
+        <span class="url-tag">URL</span>
+        <span class="url-text">${sc.url}</span>
+        <span class="url-switch" id="url-switch" title="手动输入 slug">⇄</span>
+      </div>`;
+  }
+
+  // section-meta 来源说明
+  const sourceLabel = state.urlSource === 'manual' ? '手动 slug 解析' : '当前 URL 解析';
+
   return `
     <div class="section order-section">
       <div class="order-l1">
         <div class="section-head">
           <div class="section-title">ORDER · L1 DIRECTIONS</div>
-          <div class="section-meta">当前 URL 解析 · top ${TOP}</div>
+          <div class="section-meta">${sourceLabel} · top ${TOP}</div>
         </div>
-        <div class="url-bar">
-          <span class="url-tag">URL</span>
-          <span class="url-text">${sc.url}</span>
-          <span class="url-switch" id="url-switch" title="切换 URL">⇄</span>
-        </div>
+        ${urlBarHtml}
         <div class="direction-list">
           ${top.map(renderDirection).join('')}
           ${rest.length > 0 ? `<div class="more-row ${state.expandedMore?'expanded':''}" id="more-row">${
@@ -869,16 +929,79 @@ function bindEvents(){
     moreRow.onclick = ()=>{ state.expandedMore = !state.expandedMore; render(); };
   }
 
-  // URL 切换
+  // URL 切换：⇄ 进入手动输入模式
   const urlSwitch = document.getElementById('url-switch');
   if (urlSwitch){
     urlSwitch.onclick = ()=>{
-      const keys = Object.keys(URL_SCENARIOS);
-      const idx = keys.indexOf(state.currentUrlKey);
-      state.currentUrlKey = keys[(idx + 1) % keys.length];
+      state.urlInputMode = true;
+      state.manualSlug = '';
+      render();
+      // 自动聚焦输入框
+      const inp = document.getElementById('url-input');
+      if (inp) inp.focus();
+    };
+  }
+
+  // 手动输入模式：解析按钮
+  const urlParse = document.getElementById('url-parse');
+  if (urlParse){
+    urlParse.onclick = ()=>{
+      const inp = document.getElementById('url-input');
+      const slug = inp ? inp.value : '';
+      const scenario = parseManualSlug(slug);
+      if (!scenario){
+        toast('error', `解析失败：未找到 slug "${slug}"（演示数据仅支持 lpl-s13-finals / worlds-2026-groups / lec-summer-finals）`);
+        return;
+      }
+      state.manualSlug = slug;
+      state.manualScenario = scenario;
+      state.urlSource = 'manual';
+      state.urlInputMode = false;
       state.selectedDirection = null;
       state.reopenSource = null;
-      toast('info', `切换 URL → ${getScenario().url}`);
+      state.expandedMore = false;
+      toast('info', `已解析手动 slug → ${scenario.url}`);
+      render();
+    };
+  }
+
+  // 手动输入模式：取消
+  const urlCancelInput = document.getElementById('url-cancel-input');
+  if (urlCancelInput){
+    urlCancelInput.onclick = ()=>{
+      state.urlInputMode = false;
+      state.manualSlug = '';
+      render();
+    };
+  }
+
+  // 手动输入模式：回车提交
+  const urlInput = document.getElementById('url-input');
+  if (urlInput){
+    urlInput.onkeydown = (e)=>{
+      if (e.key === 'Enter'){
+        e.preventDefault();
+        const parseBtn = document.getElementById('url-parse');
+        if (parseBtn) parseBtn.click();
+      } else if (e.key === 'Escape'){
+        state.urlInputMode = false;
+        render();
+      }
+    };
+  }
+
+  // 手动 slug 已解析态：⤺ 返回当前页 URL
+  const urlBack = document.getElementById('url-back');
+  if (urlBack){
+    urlBack.onclick = ()=>{
+      state.urlSource = 'tab';
+      state.manualSlug = '';
+      state.manualScenario = null;
+      state.urlInputMode = false;
+      state.selectedDirection = null;
+      state.reopenSource = null;
+      state.expandedMore = false;
+      toast('info', '已返回当前页 URL 下单区');
       render();
     };
   }
@@ -1306,6 +1429,10 @@ function initDemoPanel(){
 
   $('#demo-url').onchange = (e)=>{
     state.currentUrlKey = e.target.value;
+    state.urlSource = 'tab';
+    state.manualSlug = '';
+    state.manualScenario = null;
+    state.urlInputMode = false;
     state.selectedDirection = null;
     state.reopenSource = null;
     state.expandedMore = false;
