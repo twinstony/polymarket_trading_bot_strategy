@@ -137,6 +137,15 @@ class Config:
     telegram_bots: list[TelegramBot] = field(default_factory=list)
     webhooks: list[Webhook] = field(default_factory=list)
 
+    # Telegram interactive command bot (long-polls getUpdates, executes commands)
+    telegram_interactive_token: str = ""
+    telegram_allowed_user_ids: list[int] = field(default_factory=list)
+
+    # Bridge (local-only FastAPI control plane for the Chrome extension)
+    bridge_enabled: bool = False
+    bridge_host: str = "127.0.0.1"
+    bridge_port: int = 8787
+
     # --- loading -----------------------------------------------------------
     @classmethod
     def load(cls) -> "Config":
@@ -158,6 +167,9 @@ class Config:
             default_share_amount=_env_float("SHARE_AMOUNT", 10.0) or 10.0,
             default_take_profit_pct=_env_float("TAKE_PROFIT_PCT", None),
             default_stop_loss_pct=_env_float("STOP_LOSS_PCT", None),
+            bridge_enabled=_env_bool("BRIDGE_ENABLED", False),
+            bridge_host=_env("BRIDGE_HOST", "127.0.0.1") or "127.0.0.1",
+            bridge_port=_env_int("BRIDGE_PORT", 8787),
         )
 
         # Telegram notification bots
@@ -177,6 +189,14 @@ class Config:
             for w in _parse_json_list("WEBHOOKS")
             if w.get("url")
         ]
+
+        # Telegram interactive command bot
+        cfg.telegram_interactive_token = _env("TELEGRAM_INTERACTIVE_TOKEN")
+        allowed_raw = _env("TELEGRAM_ALLOWED_USER_IDS")
+        if allowed_raw:
+            cfg.telegram_allowed_user_ids = [
+                int(x.strip()) for x in allowed_raw.split(",") if x.strip().isdigit()
+            ]
 
         return cfg
 

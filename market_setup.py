@@ -40,16 +40,24 @@ def run_interactive_setup(config: Config) -> list[StrategyConfig]:
     strategies: list[StrategyConfig] = []
 
     while True:
-        raw = input(
-            "\n输入 Polymarket 市场 URL 或 slug"
-            + ("" if strategies else "（必填）")
-            + "，q 退出: "
-        ).strip()
+        prompt = "\n输入 Polymarket 市场 URL 或 slug"
+        if not strategies:
+            # 首次配置：URL 必填，但允许 bridge 模式跳过
+            if config.bridge_enabled:
+                prompt += "（必填），b 启动空 bridge，q 退出"
+            else:
+                prompt += "（必填），q 退出"
+        else:
+            prompt += "，q 退出"
+        raw = input(prompt + ": ").strip()
         if raw.lower() == "q":
             if strategies:
                 print(f"[setup] 保留已配置的 {len(strategies)} 个策略")
                 break
             print("[setup] 未配置任何策略，退出")
+            return []
+        if raw.lower() == "b" and not strategies and config.bridge_enabled:
+            print("[setup] 跳过市场配置，以空策略启动 bridge（仅供扩展连接测试）")
             return []
         if not raw:
             if strategies:

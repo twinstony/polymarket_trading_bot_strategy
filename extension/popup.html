@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>Polymarket Trading Desk · 设置</title>
+<style>
+  :root{
+    --bg-void:#0a0a0f;
+    --bg-surface:#14141c;
+    --bg-raised:#1c1c28;
+    --bg-deep:#07070b;
+    --border-hair:#2a2a3a;
+    --border-glow:#3a3a52;
+    --text-primary:#e4e4ef;
+    --text-secondary:#8a8aa0;
+    --text-muted:#5a5a72;
+    --acc-mint:#00ff9d;
+    --acc-rose:#ff3366;
+    --acc-amber:#ffaa00;
+    --acc-cyan:#00d4ff;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    width:300px;
+    background:radial-gradient(ellipse at top left, #15151f 0%, #0a0a0f 60%), var(--bg-void);
+    color:var(--text-primary);
+    font-family:'IBM Plex Sans',sans-serif;
+    font-size:13px;line-height:1.45;
+    padding:14px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .head{
+    font-family:'Major Mono Display',monospace;
+    font-size:14px;letter-spacing:0.08em;
+    color:var(--text-primary);text-transform:lowercase;
+    margin-bottom:12px;
+  }
+  .head .dot{color:var(--acc-mint)}
+  .label{
+    font-family:'JetBrains Mono',monospace;
+    font-size:10px;letter-spacing:0.1em;color:var(--text-muted);
+    text-transform:uppercase;margin-bottom:6px;
+  }
+  .input{
+    width:100%;background:var(--bg-deep);border:1px solid var(--border-hair);
+    color:var(--text-primary);font-family:'JetBrains Mono',monospace;
+    font-size:12px;padding:8px 10px;border-radius:2px;outline:none;
+    transition:all 180ms ease;
+  }
+  .input:focus{border-color:var(--acc-cyan);box-shadow:0 0 0 1px var(--acc-cyan)}
+  .row{display:flex;gap:6px;margin-top:8px}
+  .btn{
+    flex:1;height:32px;background:var(--bg-surface);border:1px solid var(--border-hair);
+    color:var(--text-primary);font-family:'IBM Plex Sans',sans-serif;font-size:12px;
+    cursor:pointer;border-radius:2px;transition:all 180ms ease;
+  }
+  .btn:hover{border-color:var(--border-glow);background:var(--bg-raised)}
+  .btn.primary{border-color:var(--acc-mint);color:var(--acc-mint)}
+  .btn.primary:hover{background:rgba(0,255,157,0.12)}
+  .status{
+    margin-top:10px;font-family:'JetBrains Mono',monospace;font-size:11px;
+    padding:6px 10px;border-radius:2px;border:1px solid var(--border-hair);
+    background:var(--bg-deep);color:var(--text-secondary);
+    word-break:break-all;
+  }
+  .status.ok{color:var(--acc-mint);border-color:rgba(0,255,157,0.3);background:rgba(0,255,157,0.05)}
+  .status.err{color:var(--acc-rose);border-color:rgba(255,51,102,0.3);background:rgba(255,51,102,0.05)}
+  .status.pending{color:var(--acc-amber);border-color:rgba(255,170,0,0.3);background:rgba(255,170,0,0.05)}
+</style>
+</head>
+<body>
+  <div class="head">poly<span class="dot">·</span>desk · 设置</div>
+  <div class="label">FastAPI Bridge 地址</div>
+  <input class="input" id="url" type="text" placeholder="http://127.0.0.1:8787" />
+  <div class="row">
+    <button class="btn primary" id="save">保存</button>
+    <button class="btn" id="test">测试连接</button>
+  </div>
+  <div class="status" id="status">未测试</div>
+  <script src="popup.js"></script>
+</body>
+</html>

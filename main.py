@@ -18,10 +18,13 @@ import signal
 import sys
 
 import trading
+from bridge import create_bridge_app
 from config import Config, StrategyConfig
 from market_setup import run_interactive_setup
 from notifications import NotifierManager
 from runtime import RuntimeManager
+from telegram_bot import TelegramCommandBot
+from uvicorn import Config as UvicornConfig, Server
 
 
 def main() -> int:
@@ -50,12 +53,14 @@ def main() -> int:
     # Interactive CLI setup (blocking, before the event loop) ---------------
     strategies = run_interactive_setup(config)
     if not strategies:
-        print("[main] 未配置任何策略，退出")
-        return 1
-
-    print(f"\n[main] 已配置 {len(strategies)} 个策略:")
-    for i, sc in enumerate(strategies, 1):
-        print(f"  [{i}] {sc.label}  entry={sc.entry_price} exit={sc.exit_price} size={sc.share_amount}")
+        if not config.bridge_enabled:
+            print("[main] 未配置任何策略，退出")
+            return 1
+        print("[main] 未配置策略，但 bridge 已启用，以空 RuntimeManager 启动（仅供扩展连接测试）")
+    else:
+        print(f"\n[main] 已配置 {len(strategies)} 个策略:")
+        for i, sc in enumerate(strategies, 1):
+            print(f"  [{i}] {sc.label}  entry={sc.entry_price} exit={sc.exit_price} size={sc.share_amount}")
 
     # Run the asyncio event loop -------------------------------------------
     try:
@@ -101,10 +106,53 @@ async def _async_main(
     )
     print("[main] bot is running. Press Ctrl-C to stop.")
 
+    # Optional FastAPI bridge (localhost only, embeds in this event loop) --
+    if config.bridge_enabled:
+        app = create_bridge_app(manager, config, client)
+        uconfig = UvicornConfig(
+            app, host=config.bridge_host, port=config.bridge_port, log_level="info"
+        )
+        server = Server(uconfig)
+        # 启动 bridge 与 stop.wait() 并行
+        bridge_task = asyncio.create_task(server.serve())
+        print(f"[bridge] serving on http://{config.bridge_host}:{config.bridge_port}")
+    else:
+        bridge_task = None
+        print("[main] bridge disabled (BRIDGE_ENABLED not set)")
+
+    # Optional Telegram interactive command bot (asyncio long-poll) ---------
+    tg_bot: TelegramCommandBot | None = None
+    tg_task: asyncio.Task | None = None
+    if config.telegram_interactive_token:
+        tg_bot = TelegramCommandBot(
+            token=config.telegram_interactive_token,
+            manager=manager,
+            client=client,
+            config=config,
+            allowed_user_ids=config.telegram_allowed_user_ids,
+        )
+        tg_task = asyncio.create_task(tg_bot.run(), name="telegram-command-bot")
+        print(
+            f"[telegram_bot] interactive bot started "
+            f"(allowed_users={len(config.telegram_allowed_user_ids) or 'any'})"
+        )
+    else:
+        print("[main] telegram interactive bot disabled (TELEGRAM_INTERACTIVE_TOKEN not set)")
+
     await stop.wait()
 
     print("\n[main] shutting down...")
+    if tg_bot is not None:
+        tg_bot.stop()
     await manager.stop_all()
+    if tg_task is not None:
+        await tg_task
+        print("[telegram_bot] stopped")
+    if bridge_task is not None:
+        print("[bridge] stopping...")
+        server.should_exit = True
+        await bridge_task
+        print("[bridge] stopped")
     print("[main] stopped.")
 
 

@@ -192,6 +192,14 @@ class StrategyRuntime:
                 trading.enter_position,
                 self._client, token_id, "BUY", cfg.share_amount, cfg.entry_price,
             )
+        if resp is None:
+            # 下单失败（API错误/服务不可用/SSL断连）：清理状态，允许下次循环重试。
+            # _entry_attempted 仅用于阻止"下单成功后被交易所取消"的重复下单，
+            # 不应阻止 API 失败时的重试。
+            self._entry_attempted = False
+            self._has_open_buy_order = False
+            print(f"[{self.label}] entry order failed — will retry next cycle")
+            return
         self._remember_order_id(resp, self._entry_order_ids)
         self._has_open_buy_order = True
 
@@ -692,6 +700,7 @@ class StrategyRuntime:
             "position_size": self._position.size,
             "avg_price": self._position.avg_price,
             "closed": self._closed,
+            "enabled": self._cfg.enabled,
         }
 
 
@@ -715,6 +724,23 @@ class RuntimeManager:
         )
         self._runtimes.append(rt)
         return rt
+
+    def remove_strategy(self, token_id: str) -> bool:
+        """按 token_id 移除策略记录（不撤单不平仓，纯记录操作）。"""
+        for i, rt in enumerate(self._runtimes):
+            if rt._cfg.token_id == token_id:
+                rt.stop()
+                self._runtimes.pop(i)
+                print(f"[manager] removed strategy: {rt.label}")
+                return True
+        return False
+
+    def find_runtime(self, token_id: str) -> "StrategyRuntime | None":
+        """按 token_id 查找运行时。"""
+        for rt in self._runtimes:
+            if rt._cfg.token_id == token_id:
+                return rt
+        return None
 
     @property
     def runtimes(self) -> list[StrategyRuntime]:
