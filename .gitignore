@@ -60,3 +60,4 @@ market_cache/
 
 # ---- WorkBuddy workspace memory (project-specific) -------------------------
 .workbuddy/
+.trae/

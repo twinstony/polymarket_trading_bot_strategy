@@ -55,7 +55,6 @@ def should_enter(market_data: MarketData, entry_price: float) -> bool:
     can realistically be filled at ``entry_price``. Replace this body with
     custom logic (volume / spread / probability based) if needed.
     """
-    print("[strategy] Checking entry logic...")
     if not market_data.has_book or entry_price is None:
         return False
     ask = market_data.best_ask
@@ -77,8 +76,11 @@ def should_exit(
     Combines the original fixed ``exit_price`` rule with the new optional
     take-profit / stop-loss percentages (expressed as fractions, e.g. 0.10 =
     10%). A rule is only evaluated when its threshold is configured.
+
+    TP/SL are evaluated against ``best_bid`` relative to ``avg_entry_price``:
+      - take-profit triggers when best_bid >= avg * (1 + take_profit_pct)
+      - stop-loss   triggers when best_bid <= avg * (1 - stop_loss_pct)
     """
-    print("[strategy] Checking exit logic...")
     if not position.has_position:
         return False
 
@@ -105,3 +107,17 @@ def should_exit(
         return True
 
     return False
+
+
+def tp_trigger_price(avg_entry: float, take_profit_pct: float | None) -> float | None:
+    """best_bid at/below which take-profit fires. None when TP disabled."""
+    if take_profit_pct is None or avg_entry <= 0:
+        return None
+    return avg_entry * (1 + take_profit_pct)
+
+
+def sl_trigger_price(avg_entry: float, stop_loss_pct: float | None) -> float | None:
+    """best_bid at/below which stop-loss fires. None when SL disabled."""
+    if stop_loss_pct is None or avg_entry <= 0:
+        return None
+    return avg_entry * (1 - stop_loss_pct)

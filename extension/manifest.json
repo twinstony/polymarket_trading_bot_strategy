@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Polymarket Trading Desk",
+  "version": "0.1.0",
+  "description": "Polymarket 交易助手侧边栏",
+  "permissions": ["sidePanel", "storage", "tabs"],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "Polymarket Trading Desk · 点击打开侧边栏"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}
