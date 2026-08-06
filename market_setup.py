@@ -19,12 +19,23 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 import urllib.parse
 from typing import Any
 
 import httpx
 
 from config import Config, StrategyConfig
+
+logger = logging.getLogger("market_setup")
+
+
+class MarketFetchError(Exception):
+    """市场解析失败：events 接口连续重试仍不可达（网络/DNS/代理问题）。
+
+    调用方应据此提示网络异常，而不是把"未找到市场"当真。
+    """
 
 GAMMA_EVENTS_URL = "https://gamma-api.polymarket.com/events"
 GAMMA_MARKETS_URL = "https://gamma-api.polymarket.com/markets"
@@ -75,7 +86,12 @@ def run_interactive_setup(config: Config) -> list[StrategyConfig]:
             print(f"[setup] 无法从输入解析 slug: {raw}")
             continue
 
-        markets = fetch_markets(slug)
+        try:
+            markets = fetch_markets(slug)
+        except MarketFetchError as exc:
+            print(f"[setup] 解析失败（网络异常）: {exc}")
+            print("[setup] 请检查网络/代理后重试")
+            continue
         if not markets:
             print(f"[setup] 未找到 slug={slug} 对应的市场，或市场均已关闭")
             continue
@@ -244,30 +260,84 @@ def extract_slug(raw: str) -> str:
 # --------------------------------------------------------------------------- #
 # Gamma API 查询
 # --------------------------------------------------------------------------- #
-def fetch_markets(slug: str) -> list[dict[str, Any]]:
-    """查询 slug 对应的所有可交易 market。"""
-    try:
-        resp = httpx.get(GAMMA_EVENTS_URL, params={"slug": slug}, timeout=20)
-        resp.raise_for_status()
-        events = resp.json()
-        if isinstance(events, list) and events:
-            ev = events[0]
-            ev_title = str(ev.get("title") or slug)
-            raw_markets = ev.get("markets") or []
-            if raw_markets:
-                return [_normalize_market(m, ev_title) for m in raw_markets]
-    except Exception as exc:  # noqa: BLE001
-        print(f"[setup] events 查询失败: {exc}")
+def _flatten_event_markets(
+    events: list[dict[str, Any]], slug: str
+) -> list[dict[str, Any]]:
+    """扁平化多个事件的全部市场（按 token 去重）。
 
+    赛事页 slug 可能命中多个事件（每场 BO3 一个事件）；旧实现只取
+    events[0]，会漏掉其余场次。
+    """
+    seen: set[tuple] = set()
+    result: list[dict[str, Any]] = []
+    for ev in events:
+        ev_title = str(ev.get("title") or slug)
+        for m in ev.get("markets") or []:
+            normalized = _normalize_market(m, ev_title)
+            tids = normalized.get("clob_token_ids") or []
+            key: tuple = tuple(tids) if tids else (normalized.get("question", ""),)
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(normalized)
+    return result
+
+
+def fetch_markets(slug: str) -> list[dict[str, Any]]:
+    """查询 slug 对应的所有可交易 market。
+
+    主路径 /events?slug= 一次返回该事件全部市场；查询成功但为空时才回退到
+    /markets?slug=。events 查询本身失败（网络/代理）时重试后仍失败则抛
+    MarketFetchError —— 绝不静默返回可能残缺的兜底结果：很多事件的主市场
+    slug 与事件 slug 相同，兜底接口只会返回那 1 个市场，造成
+    "只显示一个市场"的假象。
+    """
+    t0 = time.time()
+    events_ok = False
+    for attempt in range(2):
+        try:
+            resp = httpx.get(GAMMA_EVENTS_URL, params={"slug": slug}, timeout=12)
+            resp.raise_for_status()
+            events = resp.json()
+            events_ok = True
+            if isinstance(events, list) and events:
+                result = _flatten_event_markets(events, slug)
+                logger.info(
+                    "fetch_markets slug=%s → %d markets (%.1fs, events)",
+                    slug, len(result), time.time() - t0,
+                )
+                return result
+            break  # 查询成功但没有该 slug 的事件
+        except Exception as exc:  # noqa: BLE001
+            print(f"[setup] events 查询失败: {exc}")
+            logger.warning(
+                "fetch_markets events 查询失败 slug=%s (第 %d 次): %s",
+                slug, attempt + 1, exc,
+            )
+            if attempt == 0:
+                time.sleep(2.0)
+
+    if not events_ok:
+        logger.error("fetch_markets slug=%s: events 接口连续失败，中止解析", slug)
+        raise MarketFetchError(f"events 接口不可达: {slug}")
+
+    # events 成功但为空 → markets 兜底（子市场 slug 等场景）
     try:
-        resp = httpx.get(GAMMA_MARKETS_URL, params={"slug": slug}, timeout=20)
+        resp = httpx.get(GAMMA_MARKETS_URL, params={"slug": slug}, timeout=15)
         resp.raise_for_status()
         ms = resp.json()
         if isinstance(ms, list) and ms:
-            return [_normalize_market(m, str(ms[0].get("question") or slug)) for m in ms]
+            result = [_normalize_market(m, str(ms[0].get("question") or slug)) for m in ms]
+            logger.info(
+                "fetch_markets slug=%s → %d markets (%.1fs, markets)",
+                slug, len(result), time.time() - t0,
+            )
+            return result
     except Exception as exc:  # noqa: BLE001
         print(f"[setup] markets 查询失败: {exc}")
+        logger.warning("fetch_markets markets 查询失败 slug=%s: %s", slug, exc)
 
+    logger.warning("fetch_markets slug=%s → 0 markets (%.1fs)", slug, time.time() - t0)
     return []
 
 

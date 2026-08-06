@@ -5,6 +5,7 @@ Formats notifications for the multi-strategy asyncio runtime:
 
 * ``fill``         — buy / sell order fill details (per-strategy).
 * ``status``       — aggregate runtime status: all strategies + positions.
+* ``order``        — order placed via the interactive Telegram bot (echo).
 * ``started`` / ``stopped`` — bot lifecycle.
 
 Dispatches formatted text to every Telegram bot and every webhook.
@@ -131,3 +132,7 @@ class NotifierManager:
     def notify_config_change(self, summary: str) -> None:
         body = f"⚙️ <b>Config updated</b>\n{_html_escape(summary)}"
         self._dispatch(body, "config_change")
+
+    def notify_order_summary(self, text: str) -> None:
+        """Echo an order placed via the interactive Telegram bot to push channels."""
+        self._dispatch(text, "order")

@@ -286,7 +286,14 @@ def create_bridge_app(manager: RuntimeManager, config: Config, client) -> FastAP
         if not actual_slug:
             _bridge_error("INVALID_REQUEST", f"Cannot parse slug from input", 400)
 
-        markets = await asyncio.to_thread(market_setup.fetch_markets, actual_slug)
+        try:
+            markets = await asyncio.to_thread(market_setup.fetch_markets, actual_slug)
+        except market_setup.MarketFetchError as exc:
+            _bridge_error(
+                "MARKET_FETCH_ERROR",
+                f"Polymarket API unreachable: {exc}",
+                502,
+            )
         if not markets:
             _bridge_error("MARKET_NOT_FOUND", f"No markets found for slug: {actual_slug}", 404)
 
@@ -323,7 +330,14 @@ def create_bridge_app(manager: RuntimeManager, config: Config, client) -> FastAP
 
     @app.get("/api/markets/{slug}")
     async def get_market(slug: str) -> dict[str, Any]:
-        markets = await asyncio.to_thread(market_setup.fetch_markets, slug)
+        try:
+            markets = await asyncio.to_thread(market_setup.fetch_markets, slug)
+        except market_setup.MarketFetchError as exc:
+            _bridge_error(
+                "MARKET_FETCH_ERROR",
+                f"Polymarket API unreachable: {exc}",
+                502,
+            )
         if not markets:
             _bridge_error("MARKET_NOT_FOUND", f"No markets found for slug: {slug}", 404)
 

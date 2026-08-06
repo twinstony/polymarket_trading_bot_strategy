@@ -133,6 +133,10 @@ class Config:
     default_take_profit_pct: float | None = None
     default_stop_loss_pct: float | None = None
 
+    # Skip the interactive CLI market setup entirely (headless). Strategies
+    # are then added at runtime via the Telegram wizard or the bridge.
+    skip_cli_setup: bool = False
+
     # Notifications
     telegram_bots: list[TelegramBot] = field(default_factory=list)
     webhooks: list[Webhook] = field(default_factory=list)
@@ -167,6 +171,7 @@ class Config:
             default_share_amount=_env_float("SHARE_AMOUNT", 10.0) or 10.0,
             default_take_profit_pct=_env_float("TAKE_PROFIT_PCT", None),
             default_stop_loss_pct=_env_float("STOP_LOSS_PCT", None),
+            skip_cli_setup=_env_bool("SKIP_CLI_SETUP", False),
             bridge_enabled=_env_bool("BRIDGE_ENABLED", False),
             bridge_host=_env("BRIDGE_HOST", "127.0.0.1") or "127.0.0.1",
             bridge_port=_env_int("BRIDGE_PORT", 8787),

@@ -14,6 +14,8 @@ preferred (Unix); on Windows it falls back to ``signal.signal`` with
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 import signal
 import sys
 
@@ -27,7 +29,20 @@ from telegram_bot import TelegramCommandBot
 from uvicorn import Config as UvicornConfig, Server
 
 
+def _setup_logging() -> None:
+    """统一日志：时间戳 + 级别 + 模块名，级别可用 LOG_LEVEL 环境变量覆盖。"""
+    level = getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    # 降噪：bridge 若启用，uvicorn 访问日志很吵
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
+
+
 def main() -> int:
+    _setup_logging()
     print("Starting Polymarket Trading Bot (asyncio, multi-strategy)...")
 
     config = Config.load()
@@ -51,12 +66,20 @@ def main() -> int:
     )
 
     # Interactive CLI setup (blocking, before the event loop) ---------------
-    strategies = run_interactive_setup(config)
+    if config.skip_cli_setup:
+        print("[main] SKIP_CLI_SETUP=true，跳过交互式市场配置（headless 模式）")
+        strategies = []
+    else:
+        strategies = run_interactive_setup(config)
+
     if not strategies:
-        if not config.bridge_enabled:
+        if not (config.bridge_enabled or config.telegram_interactive_token):
             print("[main] 未配置任何策略，退出")
             return 1
-        print("[main] 未配置策略，但 bridge 已启用，以空 RuntimeManager 启动（仅供扩展连接测试）")
+        print(
+            "[main] 未配置策略，以空 RuntimeManager 启动"
+            "（策略可由 TG 向导 / bridge 动态添加）"
+        )
     else:
         print(f"\n[main] 已配置 {len(strategies)} 个策略:")
         for i, sc in enumerate(strategies, 1):
@@ -132,10 +155,16 @@ async def _async_main(
             allowed_user_ids=config.telegram_allowed_user_ids,
         )
         tg_task = asyncio.create_task(tg_bot.run(), name="telegram-command-bot")
-        print(
-            f"[telegram_bot] interactive bot started "
-            f"(allowed_users={len(config.telegram_allowed_user_ids) or 'any'})"
-        )
+        if config.telegram_allowed_user_ids:
+            print(
+                f"[telegram_bot] interactive bot started "
+                f"(allowed_users={len(config.telegram_allowed_user_ids)}, fail-closed)"
+            )
+        else:
+            print(
+                "[telegram_bot] interactive bot started but DENIES ALL USERS "
+                "(TELEGRAM_ALLOWED_USER_IDS not set — fail-closed)"
+            )
     else:
         print("[main] telegram interactive bot disabled (TELEGRAM_INTERACTIVE_TOKEN not set)")
 
